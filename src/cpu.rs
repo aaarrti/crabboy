@@ -1,10 +1,7 @@
-use crate::memory::Memory;
-use crate::util::{clear_nth_bit, is_nth_bit_set};
+use crate::memory::{InterruptSource, Memory};
+use crate::util::is_nth_bit_set;
 use anyhow::Result;
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::fmt::Debug;
 
 const HIGH_ADDRESS: u16 = 0xFF00;
 const GAME_START: u16 = 0x0100;
@@ -28,7 +25,7 @@ pub struct Cpu {
     /// IME   Global flag   Affected by DI / EI
     /// IE    0xFFFF        Bitmask: enables each interrupt source Read/write from code
     /// IF    0xFF0F        Bitmask: flags when interrupt occurred Set by hardware or code
-    ime: bool,
+    pub ime: bool,
 }
 
 impl Debug for Cpu {
@@ -134,42 +131,6 @@ impl Debug for Registers {
 }
 
 impl Cpu {
-    fn register_af(&self) -> u16 {
-        let f = ((self.flags.z as u8) << 7)
-            + ((self.flags.n as u8) << 6)
-            + ((self.flags.h as u8) << 5)
-            + ((self.flags.c as u8) << 4);
-        join_u16(f, self.registers.a)
-    }
-
-    fn register_af_write(&mut self, value: u16) {
-        let (f, a) = split_u16(value);
-        self.registers.a = a;
-        self.flags = Flags {
-            z: is_nth_bit_set(f, 7),
-            n: is_nth_bit_set(f, 6),
-            h: is_nth_bit_set(f, 5),
-            c: is_nth_bit_set(f, 4),
-        };
-    }
-
-    #[tracing::instrument(err, skip(self, memory))]
-    pub fn run(mut self, memory: Arc<Mutex<Memory>>) -> Result<()> {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        loop {
-            let mut guard = memory.lock().expect("Failed to lock memory");
-            let num_cycles = self.step(&mut guard)?;
-            let is_timer_overflow = guard.registers.inc_timer(num_cycles);
-            if self.ime && is_timer_overflow {
-                tracing::debug!("Timer overflown, interrupt goes here...");
-            }
-            // let duration = guard.registers.cycle_duration(num_cycles);
-            drop(guard);
-            // let duration = std::time::Duration::from_millis((num_cycles * 10).into());
-            // std::thread::sleep(duration);
-        }
-    }
-
     fn fetch_imm8(&mut self, memory: &Memory) -> Result<u8> {
         let byte = memory.read(self.registers.pc)?;
         self.registers.pc = self.registers.pc.wrapping_add(1);
@@ -203,11 +164,33 @@ impl Cpu {
         Ok(value)
     }
 
-    /// return number of CPU cycles the step consumed
+    //#[tracing::instrument(err, skip(memory))]
+    pub fn service_interrupt(
+        &mut self,
+        _interrupt: &InterruptSource,
+        _memory: &mut Memory,
+    ) -> Result<u8> {
+        // The following interrupt service routine is executed when control is being transferred to an interrupt handler:
+
+        //Two wait states are executed (2 M-cycles pass while nothing happens; presumably the CPU is executing nops during this time).
+        //The current value of the PC register is pushed onto the stack, consuming 2 more M-cycles.
+        //The PC register is set to the address of the handler (one of: $40, $48, $50, $58, $60). This consumes one last M-cycle.
+        //The entire process lasts 5 M-cycles.
+        if !self.ime {
+            return Ok(5);
+        }
+        anyhow::bail!("Not implemented");
+    }
+
+    /// return number of CPU T-cycles the step consumed
     #[tracing::instrument(err, skip(memory))]
-    fn step(&mut self, memory: &mut Memory) -> Result<u32> {
+    pub fn step(&mut self, memory: &mut Memory) -> Result<u8> {
         if self.registers.pc == GAME_START {
             tracing::info!("Reached game start!");
+        }
+
+        if self.registers.pc == 0x00e0 {
+            tracing::debug!("Nintendo logo verification");
         }
 
         let opcode = self.fetch_imm8(memory)?;
@@ -1083,8 +1066,8 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'B', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, B");
-                anyhow::bail!("opcode LD A, B not implemented")
-                // cycles: [4]
+                self.registers.a = self.registers.b;
+                4
             }
             0x79 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'C', 'immediate': True}]
@@ -1118,15 +1101,15 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'L', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, L");
-                anyhow::bail!("opcode LD A, L not implemented")
-                // cycles: [4]
+                self.registers.a = self.registers.l;
+                4
             }
             0x7E => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                tracing::trace!("LD A, HL");
-                anyhow::bail!("opcode LD A, HL not implemented")
-                // cycles: [8]
+                tracing::trace!("LD A, (HL)");
+                self.registers.a = memory.read(self.registers.hl())?;
+                8
             }
             0x7F => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
@@ -1180,9 +1163,10 @@ impl Cpu {
             0x86 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': 'C'}
-                tracing::trace!("ADD A, HL");
-                anyhow::bail!("opcode ADD A, HL not implemented")
-                // cycles: [8]
+                tracing::trace!("ADD A, (HL)");
+                let value = memory.read(self.registers.hl())?;
+                (self.registers.a, self.flags) = add(self.registers.a, value);
+                8
             }
             0x87 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
@@ -1581,8 +1565,7 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': 'C'}
                 tracing::trace!("CP A, (HL)");
-                let value = memory.read(self.registers.hl())?;
-                self.registers.a = value;
+                self.flags = cp(self.registers.a, memory.read(self.registers.hl())?);
                 8
             }
             0xBF => {
@@ -1941,7 +1924,7 @@ impl Cpu {
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LDH A, a8");
                 if self.registers.pc == 0x65 {
-                    tracing::debug!("Waiting for screen frame");
+                    tracing::debug!("Waiting for screen frame LY = {:#x}", memory.registers.ly);
                 }
                 let imm8 = self.fetch_imm8(memory)?;
                 self.registers.a = memory.read(imm8.high_addr())?;
@@ -2061,7 +2044,7 @@ impl Cpu {
     }
 
     // #[tracing::instrument(err, skip(memory))]
-    fn step_prefixed(&mut self, memory: &mut Memory) -> Result<u32> {
+    fn step_prefixed(&mut self, memory: &mut Memory) -> Result<u8> {
         let opcode = self.fetch_imm8(memory)?;
         // tracing::trace!("prefix_opcode = {:08b}", opcode);
         let n_cycles = match opcode {
@@ -3904,7 +3887,7 @@ fn adc(a: u8, b: u8) -> (u8, Flags) {
 
 fn dec(a: u8, flags: &Flags) -> (u8, Flags) {
     // { "Z": "Z", "N": "1", "H": "H", "C": "-"}
-    let result = a.wrapping_add(1);
+    let result = a.wrapping_sub(1);
 
     let flags = Flags {
         h: a & 0x0F == 0,
@@ -4032,4 +4015,22 @@ fn sub(a: u8, b: u8) -> (u8, Flags) {
     let c = a < b; // borrow (full carry)
 
     (result, Flags { z, n, h, c })
+}
+
+/// Perform an 8-bit addition like ADD A, r/imm/(HL).
+/// Returns the new A value and the new flags.
+fn add(a: u8, val: u8) -> (u8, Flags) {
+    let (res, carry) = a.overflowing_add(val);
+
+    // Half carry: if adding the low nibbles produced a carry out of bit 3
+    let half_carry = ((a & 0x0F) + (val & 0x0F)) > 0x0F;
+
+    let flags = Flags {
+        z: res == 0,
+        n: false, // ADD clears N
+        h: half_carry,
+        c: carry,
+    };
+
+    (res, flags)
 }

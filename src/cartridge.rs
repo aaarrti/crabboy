@@ -71,11 +71,11 @@ impl Cartridge {
 /// These bytes contain a 16-bit (big-endian) checksum simply computed as the sum of all the bytes of the cartridge ROM (except these two checksum bytes).
 #[derive(Debug)]
 pub struct Header {
-    pub title: String,
+    title: String,
     pub cartridge_type: CartridgeType,
     pub rom_size: usize,
     // pub ram_size: usize,
-    pub checksum: u8,
+    checksum: u8,
 }
 
 impl Header {

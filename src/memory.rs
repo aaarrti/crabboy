@@ -144,6 +144,36 @@ const BG_MAP_0_START: usize = 0x9800;
 const BG_MAP_0_END: usize = 0x9BFF;
 const BOOT_ROM_DISABLE_REG: usize = 0xFF50;
 
+/// Interrupt Handling
+/// The IF bit corresponding to this interrupt and the IME flag are reset by the CPU. The former “acknowledges” the interrupt, while the latter prevents any further interrupts from being handled until the program re-enables them, typically by using the reti instruction.
+/// The corresponding interrupt handler (see the IE and IF register descriptions above) is called by the CPU. This is a regular call, exactly like what would be performed by a call <address> instruction (the current PC is pushed onto the stack and then set to the address of the interrupt handler).
+/// The following interrupt service routine is executed when control is being transferred to an interrupt handler:
+///
+/// Two wait states are executed (2 M-cycles pass while nothing happens; presumably the CPU is executing nops during this time).
+/// The current value of the PC register is pushed onto the stack, consuming 2 more M-cycles.
+/// The PC register is set to the address of the handler (one of: $40, $48, $50, $58, $60). This consumes one last M-cycle.
+/// The entire process lasts 5 M-cycles.
+///
+/// Jump Vectors in first ROM bank
+/// The following addresses are supposed to be used as jump vectors:
+///
+/// RST instructions: 0000, 0008, 0010, 0018, 0020, 0028, 0030, 0038
+/// Interrupts: 0040, 0048, 0050, 0058, 0060
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InterruptSource {
+    // This interrupt is requested every time the Game Boy enters VBlank (Mode 1).
+    VBlank,
+    /// https://gbdev.io/pandocs/STAT.html#ff41--stat-lcd-status
+    Stat,
+    /// The timer interrupt is requested every time that the timer overflows (that is, when TIMA exceeds $FF).
+    Timer,
+    /// The serial interrupt is requested upon completion of a serial data transfer.
+    /// In other words, eight serial clock cycles after starting a transfer (by setting SC bit 7), the incoming data will be in SB and the interrupt will be requested.
+    Serial,
+    /// The Joypad interrupt is requested when any of P1 bits 0-3 change from High to Low. This happens when a button is pressed
+    Joypad,
+}
+
 /// The Game Boy has a 16-bit address bus, which is used to address ROM, RAM, and I/O.
 ///
 /// 0000    3FFF    16 KiB ROM bank 00                From cartridge, usually a fixed bank
@@ -226,7 +256,7 @@ impl Memory {
         Ok(memory)
     }
 
-    #[tracing::instrument(skip(self), err)]
+    // #[tracing::instrument(skip(self), err)]
     pub fn read(&self, address: u16) -> Result<u8> {
         let address = address as usize;
 
@@ -290,7 +320,7 @@ impl Memory {
         anyhow::bail!("Illegal address = {:#04x}", address);
     }
 
-    #[tracing::instrument(skip(self), err)]
+    //#[tracing::instrument(skip(self), err)]
     pub fn write(&mut self, address: u16, value: u8) -> Result<()> {
         let address = address as usize;
 
@@ -475,14 +505,14 @@ impl IoMem {
         // GCB only
         (0xFF58..=0xFF59).contains(&address) ||
         // those are only for GCB, we dont do it
-        vec![0xFF77, 0xFF76, 0xFF71, 0xFF70].contains(&address)
+        [0xFF77, 0xFF76, 0xFF71, 0xFF70].contains(&address)
     }
 
     fn read(&self, address: usize) -> Result<u8> {
         anyhow::bail!("Not implemented IO read at: {:#04x}", address)
     }
 
-    fn write(&mut self, address: usize, value: u8) -> Result<()> {
+    fn write(&mut self, address: usize, _value: u8) -> Result<()> {
         if IoMem::is_unmapped(address) {
             // not documented,so NOOP
             tracing::warn!("Write to undocumented IO at: {:#04x}", address);
@@ -495,7 +525,7 @@ impl IoMem {
 
 #[derive(Debug, Default)]
 pub struct Registers {
-    if_: IfReg,
+    pub if_: IfReg,
     ie: IeReg,
     // These two registers specify the top-left coordinates of
     // the visible 160×144 pixel area within the 256×256 pixels BG map. Values in the range 0–255 may be used.
@@ -505,11 +535,12 @@ pub struct Registers {
     // These two registers specify the on-screen coordinates of the Window’s top-left pixel.
     wy: u8,
     wx: u8,
+    // div: Div,
     /// This timer is incremented at the clock frequency specified by the TAC register.
     /// When the value overflows it is reset to the value specified in TMA and an interrupt is requested, as described below.
     tima: Tima,
     /// When TIMA overflows, it is reset to the value in this register and an interrupt is requested.
-    tma: u8,
+    tma: Tma,
     tac: TimerControl,
     // This register assigns gray shades to the color indices of the BG and Window tiles.
     bgp: BgPallet,
@@ -519,7 +550,7 @@ pub struct Registers {
     /// LY indicates the current horizontal line, which might be about to be drawn,
     /// being drawn, or just been drawn. LY can hold any value from 0 to 153,
     /// with values from 144 to 153 indicating the VBlank period.
-    ly: u8,
+    pub ly: u8,
     /// The eight Game Boy action/direction buttons are arranged as a 2×4 matrix.
     /// Select either action or direction buttons by writing to this register, then read out the bits 0-3.
     p1: Joypad,
@@ -528,7 +559,7 @@ pub struct Registers {
     nr11: Nr11,
     nr51: Nr51,
     nr50: Nr50,
-    stat: Stat,
+    pub stat: Stat,
     nr13: Nr13,
     nr14: Nr14,
 }
@@ -545,34 +576,65 @@ impl Registers {
         .contains(&address)
     }
 
-    pub fn inc_timer(&mut self, n_cycles: u32) -> bool {
-        if !self.tac.enable {
-            return false;
+    pub fn get_pending_interrupts(&mut self) -> Vec<InterruptSource> {
+        let mut irs: Vec<InterruptSource> = Vec::new();
+
+        // If IME and IE allow the servicing of more than one of the requested interrupts,
+        // the interrupt with the highest priority is serviced first.
+        // The priorities follow the order of the bits in the IE and IF registers:
+        // Bit 0 (VBlank) has the highest priority,
+        // and Bit 4 (Joypad) has the lowest priority.
+
+        if self.if_.joypad {
+            irs.push(InterruptSource::Joypad);
         }
 
-        self.tima.pending_cycles += n_cycles;
+        if self.if_.serial {
+            irs.push(InterruptSource::Serial);
+        }
+
+        if self.if_.timer {
+            irs.push(InterruptSource::Timer);
+        }
+
+        if self.if_.lcd {
+            irs.push(InterruptSource::Stat);
+        }
+
+        if self.if_.vblank {
+            irs.push(InterruptSource::VBlank);
+        }
+        irs
+    }
+
+    pub fn inc_timer(&mut self, n_cycles: u8) {
+        if !self.tac.enable {
+            return;
+        }
+
+        self.tima.pending_cycles += n_cycles as u32;
 
         if self.tima.pending_cycles < self.tac.clock_select.increment_every {
-            return false;
+            return;
         }
+
         self.tima.value += 1;
         self.tima.pending_cycles -= self.tac.clock_select.increment_every;
 
         if self.tima.value > 0xFF {
-            self.tima.value = self.tma as u32;
-            return true;
+            self.tima.value = self.tma.0 as u32;
+            self.if_.timer = true;
         }
-        false
     }
 
-    //pub fn cycle_duration(&self, n_cycles: u32) -> std::time::Duration {
-    //    let n_cycles = n_cycles as f64;
-    //    let period: f64 = 1f64 / self.tac.clock_select.frequency as f64;
-    //    let duration = (n_cycles * period * 1_000_000f64) as u64;
-    //    std::time::Duration::from_micros(duration)
-    //}
+    pub fn cycle_duration(&self, n_cycles: u32) -> std::time::Duration {
+        let n_cycles = n_cycles as f64;
+        let period: f64 = 1f64 / self.tac.clock_select.frequency as f64;
+        let duration = (n_cycles * period * 1_000_000f64) as u64;
+        std::time::Duration::from_micros(duration)
+    }
 
-    #[tracing::instrument(skip(self), err)]
+    // #[tracing::instrument(skip(self), err)]
     fn read(&self, address: usize) -> Result<u8> {
         let value = match address {
             IF_REG => self.if_.get(),
@@ -594,7 +656,7 @@ impl Registers {
         Ok(value)
     }
 
-    #[tracing::instrument(skip(self), err)]
+    // #[tracing::instrument(skip(self), err)]
     fn write(&mut self, address: usize, value: u8) -> Result<()> {
         match address {
             IF_REG => {
@@ -622,7 +684,7 @@ impl Registers {
             }
 
             TMA_REG => {
-                self.tma = value;
+                self.tma.0 = value;
             }
 
             TAC_REG => {
@@ -697,11 +759,23 @@ impl Registers {
         Ok(())
     }
 }
+
+/// This timer is incremented at the clock frequency specified by the TAC register ($FF07).
+/// When the value overflows (exceeds $FF) it is reset to the value
+/// specified in TMA (FF06) and an interrupt is requested, as described below.
 #[derive(Debug, Default)]
 struct Tima {
     value: u32,
     pending_cycles: u32,
 }
+
+/// When TIMA overflows, it is reset to the value in this register and an interrupt is requested.
+/// Example of use: if TMA is set to $FF, an interrupt is requested at the clock frequency selected
+/// in TAC (because every increment is an overflow). However, if TMA is set to $FE,
+/// an interrupt is only requested every two increments, which effectively
+/// divides the selected clock by two. Setting TMA to $FD would divide the clock by three, and so on.
+#[derive(Debug, Default)]
+struct Tma(u8);
 
 #[derive(Default, Debug)]
 struct Joypad {
@@ -911,12 +985,12 @@ enum ObjSize {
 /// When an interrupt request signal (some internal wire going from the PPU/APU/… to the CPU)
 /// changes from low to high, the corresponding bit in the IF register becomes set.
 #[derive(Debug, Default)]
-struct IfReg {
+pub struct IfReg {
     joypad: bool,
     serial: bool,
     timer: bool,
     lcd: bool,
-    vblank: bool,
+    pub vblank: bool,
 }
 
 /// Controls whether the ? interrupt handler may be called
@@ -1028,7 +1102,7 @@ impl Nr52 {
 struct Nr11 {}
 
 impl Nr11 {
-    fn set(&mut self, value: u8) {
+    fn set(&mut self, _value: u8) {
         tracing::warn!("Nr11 not implemeted")
     }
 }
@@ -1038,7 +1112,7 @@ impl Nr11 {
 struct Nr51 {}
 
 impl Nr51 {
-    fn set(&mut self, value: u8) {
+    fn set(&mut self, _value: u8) {
         tracing::warn!("Nr51 not implemeted")
     }
 }
@@ -1048,7 +1122,7 @@ impl Nr51 {
 struct Nr50 {}
 
 impl Nr50 {
-    fn set(&mut self, value: u8) {
+    fn set(&mut self, _value: u8) {
         tracing::warn!("Nr50 not implemeted")
     }
 }
@@ -1066,13 +1140,13 @@ impl Nr50 {
 ///           11: LCD Transfer
 
 #[derive(Debug, Default)]
-struct Stat {
+pub struct Stat {
     coincidence_ir_enable: bool,
     oam_ir_enable: bool,
     v_blank_ir_enable: bool,
     h_blank_ir_enable: bool,
     lyc_ly: bool,
-    mode: StatMode,
+    pub mode: StatMode,
 }
 
 impl Stat {
@@ -1095,18 +1169,13 @@ impl Stat {
 /// The STAT register itself is read-only for the mode bits — the PPU sets them automatically depending on the current scanline timing.
 /// You can only control the interrupt enable bits (STAT[3–6]).
 /// Emulators typically initialize LY = 0 and mode = 2 at boot.
-#[derive(Debug)]
-enum StatMode {
+#[derive(Debug, Default)]
+pub enum StatMode {
     Hblank,
     Vblank,
+    #[default]
     OamSearch,
     LcdTransfer,
-}
-
-impl Default for StatMode {
-    fn default() -> Self {
-        StatMode::OamSearch
-    }
 }
 
 /// Channel 1 Frequency Low
@@ -1118,7 +1187,7 @@ impl Default for StatMode {
 struct Nr13 {}
 
 impl Nr13 {
-    fn set(&mut self, value: u8) {
+    fn set(&mut self, _value: u8) {
         tracing::warn!("Nr13 not implemented")
     }
 }
@@ -1129,7 +1198,7 @@ impl Nr13 {
 struct Nr14 {}
 
 impl Nr14 {
-    fn set(&mut self, value: u8) {
+    fn set(&mut self, _value: u8) {
         tracing::warn!("Nr14 not implemented")
     }
 }

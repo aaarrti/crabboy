@@ -7,3 +7,5 @@ data/
 *.log
 .idea
 /data
+perf.data
+logs

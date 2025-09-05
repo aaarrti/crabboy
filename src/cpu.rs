@@ -164,7 +164,7 @@ impl Cpu {
         Ok(value)
     }
 
-    #[tracing::instrument(err, skip(memory))]
+    //#[tracing::instrument(err, skip(memory))]
     pub fn service_interrupt(
         &mut self,
         interrupt: &InterruptSource,
@@ -185,10 +185,9 @@ impl Cpu {
 
         if self.ime {
             tracing::debug!("serving interrupt {:?}", interrupt);
-            memory.registers.if_.acknowledge(interrupt);
+            memory.registers.acknowledge_interrupt(interrupt);
             self.push_16stk(self.registers.pc, memory)?;
             self.registers.pc = interrupt.jump_addres();
-            tracing::info!("Disable interrupt");
             self.ime = false;
         }
 
@@ -204,7 +203,7 @@ impl Cpu {
     }
 
     /// return number of CPU T-cycles the step consumed
-    #[tracing::instrument(err, skip(memory))]
+    //#[tracing::instrument(err, skip(memory))]
     pub fn step(&mut self, memory: &mut Memory) -> Result<u8> {
         if self.registers.pc == GAME_START {
             tracing::info!("Reached game start!");
@@ -1812,7 +1811,7 @@ impl Cpu {
                 // cycles: [24, 12]
             }
             0xDD => {
-                tracing::warn!("ILLEGAL_DD");
+                tracing::trace!("ILLEGAL_DD");
                 4
             }
             0xDE => {
@@ -1971,8 +1970,7 @@ impl Cpu {
             0xF3 => {
                 // []
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                tracing::trace!("DI ");
-                tracing::info!("Disable interrupt");
+                tracing::trace!("DI");
                 self.ime = false;
                 4
             }
@@ -2067,7 +2065,7 @@ impl Cpu {
         Ok(n_cycles)
     }
 
-    #[tracing::instrument(err, skip(memory))]
+    // #[tracing::instrument(err, skip(memory))]
     fn step_prefixed(&mut self, memory: &mut Memory) -> Result<u8> {
         let opcode = self.fetch_imm8(memory)?;
         // tracing::trace!("prefix_opcode = {:08b}", opcode);
@@ -3894,6 +3892,7 @@ fn join_u16(lo: u8, hi: u8) -> u16 {
     u16::from_le_bytes([lo, hi])
 }
 
+#[inline(always)]
 fn adc(a: u8, b: u8) -> (u8, Flags) {
     let (result, carry) = a.overflowing_add(b);
     // Half-carry: if carry from bit 2
@@ -3909,6 +3908,7 @@ fn adc(a: u8, b: u8) -> (u8, Flags) {
     (result, flags)
 }
 
+#[inline(always)]
 fn dec(a: u8, flags: &Flags) -> (u8, Flags) {
     // { "Z": "Z", "N": "1", "H": "H", "C": "-"}
     let result = a.wrapping_sub(1);
@@ -3923,6 +3923,7 @@ fn dec(a: u8, flags: &Flags) -> (u8, Flags) {
     (result, flags)
 }
 
+#[inline(always)]
 fn inc(a: u8, flags: &Flags) -> (u8, Flags) {
     let result = a.wrapping_add(1);
     let flags = Flags {
@@ -3934,6 +3935,7 @@ fn inc(a: u8, flags: &Flags) -> (u8, Flags) {
     (result, flags)
 }
 
+#[inline(always)]
 fn xor(a: u8, b: u8) -> (u8, Flags) {
     let result = a ^ b;
     let flags = Flags {
@@ -3946,6 +3948,7 @@ fn xor(a: u8, b: u8) -> (u8, Flags) {
     (result, flags)
 }
 
+#[inline(always)]
 fn or(a: u8, b: u8) -> (u8, Flags) {
     // {"Z": "Z", "N": "0", "H": "0", "C": "0"}
     let result = a | b;
@@ -3958,6 +3961,7 @@ fn or(a: u8, b: u8) -> (u8, Flags) {
     (result, flags)
 }
 
+#[inline(always)]
 fn cp(a: u8, b: u8) -> Flags {
     let result = a.wrapping_sub(b);
 
@@ -3969,6 +3973,7 @@ fn cp(a: u8, b: u8) -> Flags {
     }
 }
 
+#[inline(always)]
 fn and(a: u8, b: u8) -> (u8, Flags) {
     //  flags: {"Z": "Z", "N": "0", "H": "1", "C": "0"}
 
@@ -3987,6 +3992,7 @@ fn and(a: u8, b: u8) -> (u8, Flags) {
 /// Rotate left through carry for an 8-bit value.
 /// Returns the new value and updates the CPU flags.
 /// If `set_z_flag` is false (e.g. for `RL A`), Z flag is not updated.
+#[inline(always)]
 fn rl(value: u8, flags: &Flags, set_z_flag: bool) -> (u8, Flags) {
     let bit7 = (value & 0x80) != 0;
     let carry_in = if flags.c { 1 } else { 0 };
@@ -4005,11 +4011,13 @@ fn rl(value: u8, flags: &Flags, set_z_flag: bool) -> (u8, Flags) {
     (result, new_flags)
 }
 
+#[inline(always)]
 fn jr(pc: u16, offset: u8) -> u16 {
     let signed_offset = offset as i8;
     pc.wrapping_add(signed_offset as i16 as u16)
 }
 
+#[inline(always)]
 fn rla(a: u8, flags: &Flags) -> (u8, Flags) {
     // Save old carry
     let old_carry = if flags.c { 1 } else { 0 };
@@ -4030,6 +4038,7 @@ fn rla(a: u8, flags: &Flags) -> (u8, Flags) {
     (result, new_flags)
 }
 
+#[inline(always)]
 fn sub(a: u8, b: u8) -> (u8, Flags) {
     let result = a.wrapping_sub(b);
 
@@ -4043,6 +4052,7 @@ fn sub(a: u8, b: u8) -> (u8, Flags) {
 
 /// Perform an 8-bit addition like ADD A, r/imm/(HL).
 /// Returns the new A value and the new flags.
+#[inline(always)]
 fn add(a: u8, val: u8) -> (u8, Flags) {
     let (res, carry) = a.overflowing_add(val);
 
@@ -4059,6 +4069,7 @@ fn add(a: u8, val: u8) -> (u8, Flags) {
     (res, flags)
 }
 
+#[inline(always)]
 fn rra(a: u8, carry_in: bool) -> (u8, Flags) {
     let new_c = (a & 0x01) != 0; // old bit0 becomes Carry
     let result = (a >> 1) | if carry_in { 0x80 } else { 0x00 }; // carry_in to bit7

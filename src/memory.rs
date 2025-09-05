@@ -399,7 +399,7 @@ impl Memory {
         }
 
         if (NOT_USABLE_START..=NOT_USABLE_END).contains(&address) {
-            tracing::warn!("Illegal write to NOT USABLE at {:#04x}", address);
+            tracing::debug!("Illegal write to NOT USABLE at {:#04x}", address);
             return Ok(());
         }
 
@@ -597,7 +597,7 @@ impl IoMem {
     fn write(&mut self, address: usize, _value: u8) -> Result<()> {
         if IoMem::is_unmapped(address) {
             // not documented,so NOOP
-            tracing::warn!("Write to undocumented IO at: {:#04x}", address);
+            tracing::debug!("Write to undocumented IO at: {:#04x}", address);
             return Ok(());
         }
 
@@ -607,7 +607,7 @@ impl IoMem {
 
 #[derive(Debug, Default)]
 pub struct Registers {
-    pub if_: IfReg,
+    if_: IfReg,
     ie: IeReg,
     // These two registers specify the top-left coordinates of
     // the visible 160×144 pixel area within the 256×256 pixels BG map. Values in the range 0–255 may be used.
@@ -628,7 +628,7 @@ pub struct Registers {
     bgp: BgPallet,
     ob_0: ObPallet,
     ob_1: ObPallet,
-    lcdc: LcdControl,
+    pub lcdc: LcdControl,
     /// LY indicates the current horizontal line, which might be about to be drawn,
     /// being drawn, or just been drawn. LY can hold any value from 0 to 153,
     /// with values from 144 to 153 indicating the VBlank period.
@@ -644,6 +644,7 @@ pub struct Registers {
     pub stat: Stat,
     nr13: Nr13,
     nr14: Nr14,
+    lyc: u8,
 }
 
 impl Registers {
@@ -667,23 +668,23 @@ impl Registers {
         // Bit 0 (VBlank) has the highest priority,
         // and Bit 4 (Joypad) has the lowest priority.
 
-        if self.if_.joypad {
+        if self.if_.joypad && self.ie.joypad {
             irs.push(InterruptSource::Joypad);
         }
 
-        if self.if_.serial {
+        if self.if_.serial && self.ie.serial {
             irs.push(InterruptSource::Serial);
         }
 
-        if self.if_.timer {
+        if self.if_.timer && self.ie.timer {
             irs.push(InterruptSource::Timer);
         }
 
-        if self.if_.lcd {
+        if self.if_.lcd && self.ie.lcd {
             irs.push(InterruptSource::Stat);
         }
 
-        if self.if_.vblank {
+        if self.if_.vblank && self.ie.vblank {
             irs.push(InterruptSource::VBlank);
         }
         irs
@@ -705,7 +706,7 @@ impl Registers {
 
         if self.tima.value > 0xFF {
             self.tima.value = self.tma.0 as u32;
-            self.if_.timer = true;
+            self.request_interrupt(&InterruptSource::Timer);
         }
     }
 
@@ -750,7 +751,7 @@ impl Registers {
             }
 
             SB_REG => {
-                tracing::info!("Serial send: {:#x}", value);
+                tracing::debug!("Serial send: {:#x}", value);
             }
 
             SC_REG => {
@@ -810,7 +811,7 @@ impl Registers {
             }
 
             NR_50_REG => {
-                self.nr50.set(value);
+                self.nr50.set(value)?;
             }
 
             STAT_REG => {
@@ -833,12 +834,64 @@ impl Registers {
                 self.scx = value;
             }
 
+            LYC_REG => {
+                self.lyc = value;
+            }
+
             _ => {
                 anyhow::bail!("Not implemented write: {:#x}", address)
             }
         }
 
         Ok(())
+    }
+
+    pub fn request_interrupt(&mut self, interrupt_source: &InterruptSource) {
+        match interrupt_source {
+            InterruptSource::VBlank => {
+                if self.ie.vblank {
+                    self.if_.vblank = true;
+                }
+            }
+            InterruptSource::Stat => {
+                if self.ie.lcd {
+                    self.if_.lcd = true;
+                }
+            }
+            InterruptSource::Timer => {
+                if self.ie.timer {
+                    self.if_.timer = true;
+                }
+            }
+            InterruptSource::Serial => {
+                if self.ie.serial {
+                    self.if_.serial = true;
+                }
+            }
+            InterruptSource::Joypad => {
+                if self.if_.joypad {
+                    self.if_.joypad = true;
+                }
+            }
+        }
+    }
+
+    pub fn update_stat_coincidence(&mut self) {
+        let coinc_now = self.ly == self.lyc;
+        self.stat.lyc_ly = coinc_now;
+        if coinc_now && self.stat.coincidence_ir_enable {
+            self.if_.lcd = true;
+        }
+    }
+
+    pub fn acknowledge_interrupt(&mut self, interrupt: &InterruptSource) {
+        match interrupt {
+            InterruptSource::VBlank => self.if_.vblank = false,
+            InterruptSource::Stat => self.if_.lcd = false,
+            InterruptSource::Timer => self.if_.timer = false,
+            InterruptSource::Serial => self.if_.serial = false,
+            InterruptSource::Joypad => self.if_.joypad = false,
+        }
     }
 }
 
@@ -1008,8 +1061,8 @@ impl TimerControl {
 }
 
 #[derive(Debug, Default)]
-struct LcdControl {
-    lcd_ppu_enable: bool,
+pub struct LcdControl {
+    pub lcd_ppu_enable: bool,
     // Window tile map area: 0 = 9800–9BFF; 1 = 9C00–9FFF
     window_tile_map_area: (u16, u16),
     window_enable: bool,
@@ -1077,11 +1130,12 @@ pub struct IfReg {
 
 /// Controls whether the ? interrupt handler may be called
 #[derive(Debug, Default)]
-struct IeReg {
+pub struct IeReg {
     joypad: bool,
     serial: bool,
     timer: bool,
-    lcd: bool,
+    /// same as stat
+    pub lcd: bool,
     vblank: bool,
 }
 
@@ -1133,16 +1187,6 @@ impl IfReg {
             + ((self.timer as u8) << 2)
             + ((self.serial as u8) << 3)
             + ((self.joypad as u8) << 4)
-    }
-
-    pub fn acknowledge(&mut self, interrupt: &InterruptSource) {
-        match interrupt {
-            InterruptSource::VBlank => self.vblank = false,
-            InterruptSource::Stat => self.lcd = false,
-            InterruptSource::Timer => self.timer = false,
-            InterruptSource::Serial => self.serial = false,
-            InterruptSource::Joypad => self.joypad = false,
-        }
     }
 }
 
@@ -1199,23 +1243,67 @@ impl Nr11 {
     }
 }
 
-/// https://gbdev.io/pandocs/Audio_Registers.html#ff25--nr51-sound-panning
+/// This register selects which of the 4 sound channels (1–4) go to left and/or right outputs.
 #[derive(Debug, Default)]
-struct Nr51 {}
+struct Nr51 {
+    ch4_right: bool,
+    ch3_right: bool,
+    ch2_right: bool,
+    ch1_right: bool,
+    ch4_left: bool,
+    ch3_left: bool,
+    ch2_left: bool,
+    ch1_left: bool,
+}
 
 impl Nr51 {
-    fn set(&mut self, _value: u8) {
-        tracing::warn!("Nr51 not implemeted")
+    fn set(&mut self, value: u8) {
+        self.ch4_right = is_nth_bit_set(value, 7);
+        self.ch3_right = is_nth_bit_set(value, 6);
+        self.ch2_right = is_nth_bit_set(value, 5);
+        self.ch1_right = is_nth_bit_set(value, 4);
+        self.ch4_left = is_nth_bit_set(value, 3);
+        self.ch3_left = is_nth_bit_set(value, 2);
+        self.ch2_left = is_nth_bit_set(value, 1);
+        self.ch1_left = is_nth_bit_set(value, 0);
     }
 }
 
-/// https://gbdev.io/pandocs/Audio_Registers.html#ff25--nr51-sound-panning
 #[derive(Debug, Default)]
-struct Nr50 {}
+struct OutputLevel(u8);
+
+impl TryFrom<u8> for OutputLevel {
+    type Error = anyhow::Error;
+    fn try_from(value: u8) -> Result<Self> {
+        if value <= 7 {
+            Ok(OutputLevel(value))
+        } else {
+            anyhow::bail!("Output level must be in range [0, 7]")
+        }
+    }
+}
+
+/// Bit 7-4 – SO2 (Right speaker) output level (0–7)
+/// Bit 3   – Vin to SO2 (1 = enable, mixes external Vin into right output)
+/// Bit 2-0 – SO1 (Left speaker) output level (0–7)
+/// Bit 0   – Vin to SO1 (1 = enable, mixes external Vin into left output)
+#[derive(Debug, Default)]
+struct Nr50 {
+    right_speaker: OutputLevel,
+    right_vin: bool,
+    left_speaker: OutputLevel,
+    left_vin: bool,
+}
 
 impl Nr50 {
-    fn set(&mut self, _value: u8) {
-        tracing::warn!("Nr50 not implemeted")
+    fn set(&mut self, value: u8) -> Result<()> {
+        let right_speaker: u8 = (value >> 4) & 0x0F;
+        self.right_speaker = right_speaker.try_into()?;
+        self.right_vin = is_nth_bit_set(value, 3);
+        let left_speaker: u8 = value & 0x07; // 0x07 = 0000_0111
+        self.left_speaker = left_speaker.try_into()?;
+        self.left_vin = is_nth_bit_set(value, 0);
+        Ok(())
     }
 }
 
@@ -1235,7 +1323,7 @@ impl Nr50 {
 pub struct Stat {
     coincidence_ir_enable: bool,
     oam_ir_enable: bool,
-    v_blank_ir_enable: bool,
+    pub v_blank_ir_enable: bool,
     h_blank_ir_enable: bool,
     lyc_ly: bool,
     pub mode: StatMode,

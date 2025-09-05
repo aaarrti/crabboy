@@ -13,6 +13,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 extern crate glium;
 // Use the re-exported winit dependency to avoid version mismatches.
 // Requires the `simple_window_builder` feature.
+use crate::memory::{InterruptSource, StatMode};
 use glium::winit::{self, platform::x11::EventLoopBuilderExtX11};
 //use tracing_appender::non_blocking;
 //use tracing_appender::{non_blocking::WorkerGuard, rolling};
@@ -58,40 +59,65 @@ fn setup_tracing() /* -> WorkerGuard */
 
 #[derive(Debug, Default)]
 struct Ppu {
-    // T-cycles
-    counter: u16,
+    /// Think of it as an internal counter that counts 0..455 T within one LY.
+    /// It resets to 0 at the start of each new scanline (when LY increments).
+    /// You use it to decide which PPU mode you’re in during that line:
+    ///     0–79 → OAM search
+    ///     80–251 → Pixel transfer
+    ///     252–455 → HBlank
+    dot_counter: u16,
+    frame_ready: bool,
 }
 
 impl Ppu {
-    pub fn tick(&mut self, memory: &mut Memory, n_cycles: u8) {
-        self.counter += n_cycles as u16;
+    pub fn tick(&mut self, registers: &mut memory::Registers, n_cycles: u8) {
+        if !registers.lcdc.lcd_ppu_enable {
+            self.dot_counter = 0;
+            registers.ly = 0;
+            registers.stat.mode = StatMode::Hblank;
+            return;
+        }
 
-        if self.counter >= 114 * 4 {
-            self.counter = 0;
-            memory.registers.ly += 1;
+        let mut t = n_cycles;
 
-            // Subtract 114, increment LY.
-            // If LY becomes 144, enter Mode 1 (VBlank), request VBlank interrupt, and (optionally) mark “frame ready.”
-            // If LY becomes 154 → wrap to 0, enter Mode 2, and start a new frame.
-            // Update STAT coincidence (LYC=LY) and fire STAT if enabled.
-            if memory.registers.ly == 144 {
-                memory.registers.stat.mode = memory::StatMode::Vblank;
-                memory.registers.if_.vblank = true;
-            } else if memory.registers.ly == 154 {
-                tracing::debug!("reset LY");
-                memory.registers.ly = 0;
-                memory.registers.stat.mode = memory::StatMode::OamSearch;
-                // TODO: start new
+        while t > 0 {
+            t -= 1;
+            self.dot_counter += 1;
+
+            if registers.ly <= 143 {
+                // visible scanlines
+
+                match self.dot_counter {
+                    0 => registers.stat.mode = StatMode::OamSearch,
+                    80 => registers.stat.mode = StatMode::LcdTransfer,
+                    252 => registers.stat.mode = StatMode::Hblank,
+                    _ => {}
+                }
             } else {
-
-                // Within the line (LY 0–143), switch modes at these cumulative thresholds:
-                // 0 → 20 M: enter Mode 2 at line start (unless LCD off).
-                // 20 → 63 M: switch to Mode 3 at 20 M.
-                // 63 → 114 M: switch to Mode 0 at 63 M (if you’re using the fixed 43 M Mode 3).
-                // On each mode switch, check STAT bits and trigger STAT interrupt if that source is enabled.
-
-                // In VBlank lines 144–153, remain in Mode 1 for the entire 114 M; just roll the line counter as usual.
+                registers.stat.mode = StatMode::Vblank;
             }
+
+            if self.dot_counter >= 456 {
+                self.dot_counter -= 456;
+                registers.ly += 1;
+                registers.update_stat_coincidence();
+
+                if registers.ly == 144 {
+                    registers.stat.mode = StatMode::Vblank;
+                    registers.request_interrupt(&InterruptSource::VBlank);
+                    if registers.stat.v_blank_ir_enable {
+                        registers.request_interrupt(&InterruptSource::Stat);
+                    }
+                    registers.update_stat_coincidence();
+                    self.frame_ready = true;
+                    tracing::debug!("frame ready");
+                } else if registers.ly >= 154 {
+                    registers.ly = 0;
+                    self.dot_counter = 0;
+                    registers.stat.mode = StatMode::OamSearch;
+                }
+            }
+            // (Optional) perform per-line housekeeping here
         }
     }
 }
@@ -101,10 +127,7 @@ fn main() -> Result<()> {
     let cli_args = CliArg::try_parse()?;
 
     // 1. The **winit::EventLoop** for handling events.
-    let event_loop = winit::event_loop::EventLoop::builder()
-        .with_x11()
-        .build()
-        .unwrap();
+    let event_loop = winit::event_loop::EventLoop::builder().with_x11().build()?;
 
     // real GB screnn is 160×144, linearly scale it up
     // 2. Create a glutin context and glium Display
@@ -129,7 +152,7 @@ fn main() -> Result<()> {
 
         let prev_ly = memory.registers.ly;
 
-        ppu.tick(&mut memory, num_cycles);
+        ppu.tick(&mut memory.registers, num_cycles);
 
         if prev_ly != 144 && memory.registers.ly == 144 {
             tracing::debug!("reached vblank");
@@ -138,7 +161,7 @@ fn main() -> Result<()> {
         for interrupt in memory.registers.get_pending_interrupts() {
             let num_cycles = cpu.service_interrupt(&interrupt, &mut memory)?;
             memory.registers.inc_timer(num_cycles);
-            ppu.tick(&mut memory, num_cycles);
+            ppu.tick(&mut memory.registers, num_cycles);
         }
     }
 }

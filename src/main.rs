@@ -15,17 +15,49 @@ extern crate glium;
 // Requires the `simple_window_builder` feature.
 use crate::memory::{InterruptSource, StatMode};
 use glium::winit::{self, platform::x11::EventLoopBuilderExtX11};
+use glium::{implement_vertex, uniform, Surface};
 //use tracing_appender::non_blocking;
 //use tracing_appender::{non_blocking::WorkerGuard, rolling};
 
 const SCALE_FACTOR: u32 = 3;
 // real GB screnn is 160×144, linearly scale it up linearly;
-const DISPAY_HEIGHT: u32 = 180 * SCALE_FACTOR;
+const DISPLAY_HEIGHT: u32 = 180 * SCALE_FACTOR;
 const DISPLAY_WIDTH: u32 = 144 * SCALE_FACTOR;
+
+const VERTEX_SHADER: &'static str = r#"
+#version 140
+in vec2 position;
+in vec2 tex_coords;
+out vec2 v_tex;
+void main() {
+    v_tex = tex_coords;
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+"#;
+
+const FRAGMENT_SHADER: &'static str = r#"
+#version 140
+in vec2 v_tex;
+out vec4 color;
+uniform sampler2D fb;
+void main() {
+    color = texture(fb, v_tex);
+}
+"#;
+
+#[derive(Copy, Clone)]
+struct Vertex {
+    position: [f32; 2],
+    tex_coords: [f32; 2],
+}
+implement_vertex!(Vertex, position, tex_coords);
 
 #[derive(Debug, Parser)]
 struct CliArg {
+    #[arg(short, long)]
     cartridge: PathBuf,
+    #[arg(short, long, default_value_t = false)]
+    debug: bool,
 }
 
 fn setup_tracing() /* -> WorkerGuard */
@@ -51,7 +83,7 @@ fn setup_tracing() /* -> WorkerGuard */
 
     tracing_subscriber::registry()
         .with(stdout_layer)
-        //    .with(file_layer)
+        //.with(file_layer)
         .init();
 
     //guard_file
@@ -122,6 +154,8 @@ impl Ppu {
     }
 }
 
+
+
 fn main() -> Result<()> {
     setup_tracing();
     let cli_args = CliArg::try_parse()?;
@@ -131,10 +165,43 @@ fn main() -> Result<()> {
 
     // real GB screnn is 160×144, linearly scale it up
     // 2. Create a glutin context and glium Display
-    let (_window, _display) = glium::backend::glutin::SimpleWindowBuilder::new()
-        .with_inner_size(DISPLAY_WIDTH, DISPAY_HEIGHT)
+    let (_window, display) = glium::backend::glutin::SimpleWindowBuilder::new()
+        .with_inner_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
         .with_title("crabboy")
         .build(&event_loop);
+
+    let program = glium::Program::from_source(&display, VERTEX_SHADER, FRAGMENT_SHADER, None)?;
+
+    let verts = vec![
+        Vertex {
+            position: [-1.0, -1.0],
+            tex_coords: [0.0, 1.0],
+        },
+        Vertex {
+            position: [-1.0, 1.0],
+            tex_coords: [0.0, 0.0],
+        },
+        Vertex {
+            position: [1.0, -1.0],
+            tex_coords: [1.0, 1.0],
+        },
+        Vertex {
+            position: [1.0, 1.0],
+            tex_coords: [1.0, 0.0],
+        },
+    ];
+    let vbo = glium::VertexBuffer::new(&display, &verts)?;
+    let indices = glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip);
+
+    // ----- Create texture once -----
+    let empty = vec![0u8; (DISPLAY_WIDTH * DISPLAY_HEIGHT * 4) as usize];
+    let tex = {
+        let raw = glium::texture::RawImage2d::from_raw_rgba_reversed(
+            &empty,
+            (DISPLAY_WIDTH, DISPLAY_HEIGHT),
+        );
+        glium::texture::Texture2d::new(&display, raw)?
+    };
 
     let boot_room: Vec<u8> = std::fs::read("data/boot.gb")?;
 
@@ -150,12 +217,36 @@ fn main() -> Result<()> {
         let num_cycles = cpu.step(&mut memory)?;
         memory.registers.inc_timer(num_cycles);
 
-        let prev_ly = memory.registers.ly;
-
         ppu.tick(&mut memory.registers, num_cycles);
 
-        if prev_ly != 144 && memory.registers.ly == 144 {
-            tracing::debug!("reached vblank");
+        if ppu.frame_ready {
+            let fb = memory.decode_framebuffer();
+
+            // Upload to texture (top-left origin in our buffer → use *_reversed)
+            let raw = glium::texture::RawImage2d::from_raw_rgba_reversed(
+                &fb,
+                (DISPLAY_WIDTH, DISPLAY_HEIGHT),
+            );
+
+            tex.write(
+                glium::Rect {
+                    left: 0,
+                    bottom: 0,
+                    width: DISPLAY_WIDTH,
+                    height: DISPLAY_HEIGHT,
+                },
+                raw,
+            );
+
+            // Draw
+            let mut frame = display.draw();
+            let uniforms = uniform! {
+                fb: tex.sampled().magnify_filter(glium::uniforms::MagnifySamplerFilter::Nearest)
+                               .minify_filter(glium::uniforms::MinifySamplerFilter::Nearest),
+            };
+            frame.draw(&vbo, &indices, &program, &uniforms, &Default::default())?;
+            frame.finish()?;
+            ppu.frame_ready = false;
         }
 
         for interrupt in memory.registers.get_pending_interrupts() {

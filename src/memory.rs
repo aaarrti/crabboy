@@ -414,6 +414,11 @@ impl Memory {
 
         anyhow::bail!("Illegal address = {:#04x}", address)
     }
+
+
+    pub fn decode_framebuffer(&self) -> Vec<u8> {
+        vec![]
+    }
 }
 
 /// Tile Data (0x8000–0x97FF)

@@ -14,8 +14,8 @@ extern crate glium;
 // Use the re-exported winit dependency to avoid version mismatches.
 // Requires the `simple_window_builder` feature.
 use glium::winit::{self, platform::x11::EventLoopBuilderExtX11};
-use tracing_appender::non_blocking;
-use tracing_appender::{non_blocking::WorkerGuard, rolling};
+//use tracing_appender::non_blocking;
+//use tracing_appender::{non_blocking::WorkerGuard, rolling};
 
 const SCALE_FACTOR: u32 = 3;
 // real GB screnn is 160×144, linearly scale it up linearly;
@@ -27,7 +27,8 @@ struct CliArg {
     cartridge: PathBuf,
 }
 
-fn setup_tracing() -> WorkerGuard {
+fn setup_tracing() /* -> WorkerGuard */
+{
     // Layer 1: log INFO+ to terminal
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stdout)
@@ -37,22 +38,22 @@ fn setup_tracing() -> WorkerGuard {
         .with_filter(EnvFilter::new("info"));
 
     // Layer 2: log TRACE+ to file
-    let file_appender = rolling::minutely("logs", "emu.log");
-    let (nb_file, guard_file) = non_blocking(file_appender);
+    //let file_appender = rolling::minutely("logs", "emu.log");
+    //let (nb_file, guard_file) = non_blocking(file_appender);
 
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(nb_file)
-        .compact()
-        .with_ansi(false)
-        .with_line_number(true)
-        .with_filter(EnvFilter::new("trace")); // everything
+    //let file_layer = tracing_subscriber::fmt::layer()
+    //    .with_writer(nb_file)
+    //    .compact()
+    //    .with_ansi(false)
+    //    .with_line_number(true)
+    //    .with_filter(EnvFilter::new("trace")); // everything
 
     tracing_subscriber::registry()
         .with(stdout_layer)
-        .with(file_layer)
+        //    .with(file_layer)
         .init();
 
-    guard_file
+    //guard_file
 }
 
 #[derive(Debug, Default)]
@@ -96,7 +97,7 @@ impl Ppu {
 }
 
 fn main() -> Result<()> {
-    let _guards = setup_tracing();
+    setup_tracing();
     let cli_args = CliArg::try_parse()?;
 
     // 1. The **winit::EventLoop** for handling events.

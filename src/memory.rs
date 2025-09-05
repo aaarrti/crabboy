@@ -1,7 +1,6 @@
-use crate::cartridge::{Cartridge, CartridgeType};
+use crate::cartridge::Cartridge;
 use crate::util::is_nth_bit_set;
 use anyhow::Result;
-use std::option::Option;
 use std::vec;
 
 const BOOT_ROM_END: usize = 0x00FF;
@@ -174,12 +173,12 @@ pub enum InterruptSource {
 }
 
 impl InterruptSource {
-    /// Interrupt	IF Bit	Vector Address
-    /// VBlank	Bit 0	0x0040
-    /// LCD STAT	Bit 1	0x0048
-    /// Timer	Bit 2	0x0050
-    /// Serial	Bit 3	0x0058
-    /// Joypad	Bit 4	0x0060
+    /// Interrupt   IF Bit  Vector Address
+    /// VBlank      Bit 0   0x0040
+    /// LCD STAT    Bit 1   0x0048
+    /// Timer       Bit 2   0x0050
+    /// Serial      Bit 3   0x0058
+    /// Joypad      Bit 4   0x0060
     pub fn jump_addres(&self) -> u16 {
         match self {
             InterruptSource::VBlank => 0x0040,
@@ -213,9 +212,9 @@ impl InterruptSource {
 pub struct Memory {
     boot_rom: [u8; BOOT_ROM_END + 1],
     rom_0: [u8; ROM_0_END + 1],
-    rom_n: Option<[u8; ROM_N_END - ROM_N_START + 1]>,
+    // rom_n: Option<[u8; ROM_N_END - ROM_N_START + 1]>,
     vram: Vram,
-    ex_ram: Option<[u8; EX_RAM_END - EX_RAM_START + 1]>,
+    // ex_ram: Option<[u8; EX_RAM_END - EX_RAM_START + 1]>,
     pub registers: Registers,
     // 2 banks together
     wram: Wram,
@@ -230,19 +229,8 @@ impl Memory {
     #[tracing::instrument(err)]
     pub fn new(cartridge: Cartridge, boot_rom: Vec<u8>) -> Result<Self> {
         let mut rom_0 = [0; ROM_0_END + 1];
-        let rom_n = if cartridge.header.cartridge_type == CartridgeType::RomOnly {
-            Option::None
-        } else {
-            Option::Some([0; ROM_N_END - ROM_N_START + 1])
-        };
         let vram = Vram::new();
         let wram = Wram::new();
-        let ex_ram = if cartridge.header.cartridge_type == CartridgeType::RomOnly {
-            Option::None
-        } else {
-            Option::Some([0; EX_RAM_END - EX_RAM_START + 1])
-        };
-
         let io_ = IoMem::default();
 
         // mmap first 16KB
@@ -260,12 +248,10 @@ impl Memory {
         let memory = Memory {
             boot_rom: boot_rom_,
             rom_0,
-            rom_n,
             vram,
             wram,
             hram,
             registers,
-            ex_ram,
             cartridge,
             io_,
             boot_rom_mapped: true,
@@ -484,11 +470,11 @@ struct SpriteAttribute {
 /// It holds all the sprite attribute data the PPU needs to draw sprites. There are 40 sprite entries, each 4 bytes long:
 ///
 /// Layout per sprite (4 bytes)
-/// Offset	Name	Meaning
-/// +0	Y position	Sprite’s vertical position on screen = (value − 16). Values 0–255 wrap.
-/// +1	X position	Sprite’s horizontal position = (value − 8). Values 0–255 wrap.
-/// +2	Tile index	Which 8×8 tile to use (from tile data in VRAM). Interpretation depends on LCDC (8×8 vs 8×16 sprites).
-/// +3	Attributes	Flags controlling rendering (see below).
+/// Offset  Name    Meaning
+/// +0  Y position  Sprite’s vertical position on screen = (value − 16). Values 0–255 wrap.
+/// +1  X position  Sprite’s horizontal position = (value − 8). Values 0–255 wrap.
+/// +2  Tile index  Which 8×8 tile to use (from tile data in VRAM). Interpretation depends on LCDC (8×8 vs 8×16 sprites).
+/// +3  Attributes  Flags controlling rendering (see below).
 #[derive(Debug)]
 struct ObjectAttributeMemory {
     sprites: [SpriteAttribute; 40usize],
@@ -498,7 +484,7 @@ impl Default for ObjectAttributeMemory {
     fn default() -> Self {
         let sprites = [SpriteAttribute::default(); 40];
 
-        ObjectAttributeMemory { sprites: sprites }
+        ObjectAttributeMemory { sprites }
     }
 }
 

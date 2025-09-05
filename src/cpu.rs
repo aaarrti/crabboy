@@ -184,14 +184,23 @@ impl Cpu {
         // Clear IME,
 
         if self.ime {
+            tracing::debug!("serving interrupt {:?}", interrupt);
             memory.registers.if_.acknowledge(interrupt);
             self.push_16stk(self.registers.pc, memory)?;
             self.registers.pc = interrupt.jump_addres();
-
+            tracing::info!("Disable interrupt");
             self.ime = false;
         }
 
         Ok(5)
+    }
+
+    fn register_af(&self) -> u16 {
+        let f = (self.flags.z as u8)
+            + ((self.flags.n as u8) << 1)
+            + ((self.flags.h as u8) << 2)
+            + ((self.flags.c as u8) << 3);
+        join_u16(self.registers.a, f)
     }
 
     /// return number of CPU T-cycles the step consumed
@@ -226,9 +235,9 @@ impl Cpu {
             0x02 => {
                 // [{'name': 'BC', 'immediate': False}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                tracing::trace!("LD BC, A");
-                anyhow::bail!("opcode LD BC, A not implemented")
-                // cycles: [8]
+                tracing::trace!("LD (BC), A");
+                memory.write(self.registers.bc(), self.registers.a)?;
+                8
             }
             0x03 => {
                 // [{'name': 'BC', 'immediate': True}]
@@ -415,8 +424,8 @@ impl Cpu {
                 // [{'name': 'E', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
                 tracing::trace!("INC E");
-                anyhow::bail!("opcode INC E not implemented")
-                // cycles: [4]
+                (self.registers.e, self.flags) = inc(self.registers.e, &self.flags);
+                4
             }
             0x1D => {
                 // [{'name': 'E', 'immediate': True}]
@@ -437,8 +446,8 @@ impl Cpu {
                 // []
                 // {'Z': '0', 'N': '0', 'H': '0', 'C': 'C'}
                 tracing::trace!("RRA ");
-                anyhow::bail!("opcode RRA  not implemented")
-                // cycles: [4]
+                (self.registers.a, self.flags) = rra(self.registers.a, self.flags.c);
+                4
             }
             0x20 => {
                 // [{'name': 'NZ', 'immediate': True}, {'name': 'e8', 'bytes': 1, 'immediate': True}]
@@ -535,15 +544,15 @@ impl Cpu {
                 // [{'name': 'HL', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("DEC HL");
-                anyhow::bail!("opcode DEC HL not implemented")
-                // cycles: [8]
+                self.registers.set_hl(self.registers.hl() - 1);
+                8
             }
             0x2C => {
                 // [{'name': 'L', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
                 tracing::trace!("INC L");
-                anyhow::bail!("opcode INC L not implemented")
-                // cycles: [4]
+                (self.registers.l, self.flags) = inc(self.registers.l, &self.flags);
+                4
             }
             0x2D => {
                 // [{'name': 'L', 'immediate': True}]
@@ -623,8 +632,10 @@ impl Cpu {
                 // []
                 // {'Z': '-', 'N': '0', 'H': '0', 'C': '1'}
                 tracing::trace!("SCF ");
-                anyhow::bail!("opcode SCF  not implemented")
-                // cycles: [4]
+                self.flags.c = true;
+                self.flags.n = false;
+                self.flags.h = false;
+                4
             }
             0x38 => {
                 // [{'name': 'C', 'immediate': True}, {'name': 'e8', 'bytes': 1, 'immediate': True}]
@@ -750,8 +761,7 @@ impl Cpu {
                 // [{'name': 'C', 'immediate': True}, {'name': 'C', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD C, C");
-                anyhow::bail!("opcode LD C, C not implemented")
-                // cycles: [4]
+                4
             }
             0x4A => {
                 // [{'name': 'C', 'immediate': True}, {'name': 'D', 'immediate': True}]
@@ -1155,8 +1165,8 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'E', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': 'C'}
                 tracing::trace!("ADD A, E");
-                anyhow::bail!("opcode ADD A, E not implemented")
-                // cycles: [4]
+                (self.registers.a, self.flags) = add(self.registers.a, self.registers.e);
+                4
             }
             0x84 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'H', 'immediate': True}]
@@ -1374,8 +1384,8 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '1', 'C': '0'}
                 tracing::trace!("AND A, C");
-                anyhow::bail!("opcode AND A, C not implemented")
-                // cycles: [4]
+                (self.registers.a, self.flags) = and(self.registers.a, self.registers.c);
+                4
             }
             0xA2 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'D', 'immediate': True}]
@@ -1416,8 +1426,8 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '1', 'C': '0'}
                 tracing::trace!("AND A, A");
-                anyhow::bail!("opcode AND A, A not implemented")
-                // cycles: [4]
+                (self.registers.a, self.flags) = and(self.registers.a, self.registers.a);
+                4
             }
             0xA8 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'B', 'immediate': True}]
@@ -1584,15 +1594,20 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '1', 'N': '1', 'H': '0', 'C': '0'}
                 tracing::trace!("CP A, A");
-                anyhow::bail!("opcode CP A, A not implemented")
-                // cycles: [4]
+                self.flags = cp(self.registers.a, self.registers.a);
+                4
             }
             0xC0 => {
                 // [{'name': 'NZ', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("RET NZ");
-                anyhow::bail!("opcode RET NZ not implemented")
-                // cycles: [20, 8]
+                if !self.flags.z {
+                    let addr = self.pop_16stk(memory)?;
+                    self.registers.pc = addr;
+                    20
+                } else {
+                    8
+                }
             }
             0xC1 => {
                 // [{'name': 'BC', 'immediate': True}]
@@ -1744,8 +1759,8 @@ impl Cpu {
                 // [{'name': 'DE', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PUSH DE");
-                anyhow::bail!("opcode PUSH DE not implemented")
-                // cycles: [16]
+                self.push_16stk(self.registers.de(), memory)?;
+                16
             }
             0xD6 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
@@ -1797,11 +1812,8 @@ impl Cpu {
                 // cycles: [24, 12]
             }
             0xDD => {
-                // []
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                tracing::trace!("ILLEGAL_DD ");
-                anyhow::bail!("opcode ILLEGAL_DD  not implemented")
-                // cycles: [4]
+                tracing::warn!("ILLEGAL_DD");
+                4
             }
             0xDE => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
@@ -1857,8 +1869,8 @@ impl Cpu {
                 // [{'name': 'HL', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PUSH HL");
-                anyhow::bail!("opcode PUSH HL not implemented")
-                // cycles: [16]
+                self.push_16stk(self.registers.hl(), memory)?;
+                16
             }
             0xE6 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
@@ -1975,8 +1987,8 @@ impl Cpu {
                 // [{'name': 'AF', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PUSH AF");
-                anyhow::bail!("opcode PUSH AF not implemented")
-                // cycles: [16]
+                self.push_16stk(self.register_af(), memory)?;
+                16
             }
             0xF6 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
@@ -4045,4 +4057,17 @@ fn add(a: u8, val: u8) -> (u8, Flags) {
     };
 
     (res, flags)
+}
+
+fn rra(a: u8, carry_in: bool) -> (u8, Flags) {
+    let new_c = (a & 0x01) != 0; // old bit0 becomes Carry
+    let result = (a >> 1) | if carry_in { 0x80 } else { 0x00 }; // carry_in to bit7
+
+    let flags = Flags {
+        z: false, // RRA always clears Z on GB
+        n: false,
+        h: false,
+        c: new_c,
+    };
+    (result, flags)
 }

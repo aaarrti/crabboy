@@ -1,9 +1,8 @@
+use crate::cartridge::{Cartridge, CartridgeType};
+use crate::util::is_nth_bit_set;
 use anyhow::Result;
 use std::option::Option;
 use std::vec;
-
-use crate::cartridge::{Cartridge, CartridgeType};
-use crate::util::is_nth_bit_set;
 
 const BOOT_ROM_END: usize = 0x00FF;
 const ROM_0_END: usize = 0x3FFF;
@@ -174,6 +173,24 @@ pub enum InterruptSource {
     Joypad,
 }
 
+impl InterruptSource {
+    /// Interrupt	IF Bit	Vector Address
+    /// VBlank	Bit 0	0x0040
+    /// LCD STAT	Bit 1	0x0048
+    /// Timer	Bit 2	0x0050
+    /// Serial	Bit 3	0x0058
+    /// Joypad	Bit 4	0x0060
+    pub fn jump_addres(&self) -> u16 {
+        match self {
+            InterruptSource::VBlank => 0x0040,
+            InterruptSource::Stat => 0x0048,
+            InterruptSource::Timer => 0x0050,
+            InterruptSource::Serial => 0x0058,
+            InterruptSource::Joypad => 0x0060,
+        }
+    }
+}
+
 /// The Game Boy has a 16-bit address bus, which is used to address ROM, RAM, and I/O.
 ///
 /// 0000    3FFF    16 KiB ROM bank 00                From cartridge, usually a fixed bank
@@ -206,6 +223,7 @@ pub struct Memory {
     pub cartridge: Cartridge,
     boot_rom_mapped: bool,
     io_: IoMem,
+    oam: ObjectAttributeMemory,
 }
 
 impl Memory {
@@ -251,12 +269,13 @@ impl Memory {
             cartridge,
             io_,
             boot_rom_mapped: true,
+            oam: ObjectAttributeMemory::default(),
         };
 
         Ok(memory)
     }
 
-    // #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err)]
     pub fn read(&self, address: u16) -> Result<u8> {
         let address = address as usize;
 
@@ -320,7 +339,7 @@ impl Memory {
         anyhow::bail!("Illegal address = {:#04x}", address);
     }
 
-    //#[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err)]
     pub fn write(&mut self, address: u16, value: u8) -> Result<()> {
         let address = address as usize;
 
@@ -342,7 +361,9 @@ impl Memory {
         }
 
         if address == BANK_SELECT_REGISTER {
-            anyhow::bail!("Bank select register not implemented");
+            // thos writes are handled by MBC on cartridge
+            // rom only cartridge - no bank switch, just ignore
+            return Ok(());
         }
 
         if address == IE_REG {
@@ -379,11 +400,21 @@ impl Memory {
         }
 
         if (OAM_START..=OAM_END).contains(&address) {
-            anyhow::bail!("OAM write not implemted")
+            // CPU access is blocked during Mode 2 & 3 (OAM search and drawing), but allowed in HBlank & VBlank.
+
+            return match &self.registers.stat.mode {
+                StatMode::Hblank | StatMode::Vblank => self.oam.write(address, value),
+
+                mode => {
+                    tracing::warn!("Blocking OAM write during mode = {:?}", mode);
+                    Ok(())
+                }
+            };
         }
 
         if (NOT_USABLE_START..=NOT_USABLE_END).contains(&address) {
-            anyhow::bail!("Illegal write to NOT USABLE at {:#04x}", address)
+            tracing::warn!("Illegal write to NOT USABLE at {:#04x}", address);
+            return Ok(());
         }
 
         if IoMem::matches(address) {
@@ -438,6 +469,71 @@ impl Vram {
     fn write(&mut self, address: usize, value: u8) {
         let address = address - VRAM_START;
         self.0[address] = value;
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+struct SpriteAttribute {
+    y: u8,
+    x: u8,
+    tile: u8,
+    attr: u8,
+}
+
+/// In the Game Boy, OAM (Object Attribute Memory) is a 160-byte table at 0xFE00–0xFE9F.
+/// It holds all the sprite attribute data the PPU needs to draw sprites. There are 40 sprite entries, each 4 bytes long:
+///
+/// Layout per sprite (4 bytes)
+/// Offset	Name	Meaning
+/// +0	Y position	Sprite’s vertical position on screen = (value − 16). Values 0–255 wrap.
+/// +1	X position	Sprite’s horizontal position = (value − 8). Values 0–255 wrap.
+/// +2	Tile index	Which 8×8 tile to use (from tile data in VRAM). Interpretation depends on LCDC (8×8 vs 8×16 sprites).
+/// +3	Attributes	Flags controlling rendering (see below).
+#[derive(Debug)]
+struct ObjectAttributeMemory {
+    sprites: [SpriteAttribute; 40usize],
+}
+
+impl Default for ObjectAttributeMemory {
+    fn default() -> Self {
+        let sprites = [SpriteAttribute::default(); 40];
+
+        ObjectAttributeMemory { sprites: sprites }
+    }
+}
+
+impl ObjectAttributeMemory {
+    fn write(&mut self, address: usize, value: u8) -> Result<()> {
+        // index = addr - 0xFE00   // 0–159
+        // sprite_id = index / 4   // 0–39
+        // field = index % 4       // 0..=3
+
+        let index = address - OAM_START;
+        let sprite_id = index / 4;
+
+        let sprite = &mut self.sprites[sprite_id];
+
+        match index % 4 {
+            0 => {
+                sprite.y = value;
+            }
+
+            1 => {
+                sprite.x = value;
+            }
+
+            2 => {
+                sprite.tile = value;
+            }
+
+            3 => {
+                sprite.attr = value;
+            }
+
+            _ => anyhow::bail!("this is unexpected"),
+        }
+
+        Ok(())
     }
 }
 
@@ -1052,6 +1148,16 @@ impl IfReg {
             + ((self.serial as u8) << 3)
             + ((self.joypad as u8) << 4)
     }
+
+    pub fn acknowledge(&mut self, interrupt: &InterruptSource) {
+        match interrupt {
+            InterruptSource::VBlank => self.vblank = false,
+            InterruptSource::Stat => self.lcd = false,
+            InterruptSource::Timer => self.timer = false,
+            InterruptSource::Serial => self.serial = false,
+            InterruptSource::Joypad => self.joypad = false,
+        }
+    }
 }
 
 #[derive(Default, Debug)]
@@ -1169,7 +1275,7 @@ impl Stat {
 /// The STAT register itself is read-only for the mode bits — the PPU sets them automatically depending on the current scanline timing.
 /// You can only control the interrupt enable bits (STAT[3–6]).
 /// Emulators typically initialize LY = 0 and mode = 2 at boot.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum StatMode {
     Hblank,
     Vblank,

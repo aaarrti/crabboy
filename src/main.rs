@@ -27,12 +27,10 @@ struct CliArg {
     cartridge: PathBuf,
 }
 
-fn setup_tracing() -> (WorkerGuard, WorkerGuard) {
-    let (nb_stdout, guard_stdout) = non_blocking(std::io::stdout());
-
+fn setup_tracing() -> WorkerGuard {
     // Layer 1: log INFO+ to terminal
     let stdout_layer = tracing_subscriber::fmt::layer()
-        .with_writer(nb_stdout)
+        .with_writer(std::io::stdout)
         .compact()
         .with_ansi(true)
         .with_line_number(true)
@@ -40,10 +38,8 @@ fn setup_tracing() -> (WorkerGuard, WorkerGuard) {
 
     // Layer 2: log TRACE+ to file
     let file_appender = rolling::minutely("logs", "emu.log");
-    // let buf_writer = BufWriter::with_capacity(8 * 1024, file_appender);
     let (nb_file, guard_file) = non_blocking(file_appender);
 
-    // let file = std::fs::File::create("debug.log").unwrap();
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(nb_file)
         .compact()
@@ -56,7 +52,7 @@ fn setup_tracing() -> (WorkerGuard, WorkerGuard) {
         .with(file_layer)
         .init();
 
-    (guard_stdout, guard_file)
+    guard_file
 }
 
 #[derive(Debug, Default)]

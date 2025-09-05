@@ -164,11 +164,11 @@ impl Cpu {
         Ok(value)
     }
 
-    //#[tracing::instrument(err, skip(memory))]
+    #[tracing::instrument(err, skip(memory))]
     pub fn service_interrupt(
         &mut self,
-        _interrupt: &InterruptSource,
-        _memory: &mut Memory,
+        interrupt: &InterruptSource,
+        memory: &mut Memory,
     ) -> Result<u8> {
         // The following interrupt service routine is executed when control is being transferred to an interrupt handler:
 
@@ -176,10 +176,22 @@ impl Cpu {
         //The current value of the PC register is pushed onto the stack, consuming 2 more M-cycles.
         //The PC register is set to the address of the handler (one of: $40, $48, $50, $58, $60). This consumes one last M-cycle.
         //The entire process lasts 5 M-cycles.
-        if !self.ime {
-            return Ok(5);
+        // After each instruction, check if interrupts should fire.
+        // If yes, you:
+        // Clear IF’s bit for that interrupt,
+        // Push PC to the stack,
+        // Set PC to the vector address,
+        // Clear IME,
+
+        if self.ime {
+            memory.registers.if_.acknowledge(interrupt);
+            self.push_16stk(self.registers.pc, memory)?;
+            self.registers.pc = interrupt.jump_addres();
+
+            self.ime = false;
         }
-        anyhow::bail!("Not implemented");
+
+        Ok(5)
     }
 
     /// return number of CPU T-cycles the step consumed
@@ -279,8 +291,8 @@ impl Cpu {
                 // [{'name': 'BC', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("DEC BC");
-                anyhow::bail!("opcode DEC BC not implemented")
-                // cycles: [8]
+                self.registers.set_bc(self.registers.bc() - 1);
+                8
             }
             0x0C => {
                 // [{'name': 'C', 'immediate': True}]
@@ -514,9 +526,10 @@ impl Cpu {
             0x2A => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'increment': True, 'immediate': False}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                tracing::trace!("LD A, HL");
-                anyhow::bail!("opcode LD A, HL not implemented")
-                // cycles: [8]
+                tracing::trace!("LD A, (HL)+");
+                self.registers.a = memory.read(self.registers.hl())?;
+                self.registers.set_hl(self.registers.hl() + 1);
+                8
             }
             0x2B => {
                 // [{'name': 'HL', 'immediate': True}]
@@ -1115,8 +1128,7 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, A");
-                anyhow::bail!("opcode LD A, A not implemented")
-                // cycles: [4]
+                4
             }
             0x80 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'B', 'immediate': True}]
@@ -1474,8 +1486,8 @@ impl Cpu {
                 // [{'name': 'A', 'immediate': True}, {'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '0', 'C': '0'}
                 tracing::trace!("OR A, C");
-                anyhow::bail!("opcode OR A, C not implemented")
-                // cycles: [4]
+                (self.registers.a, self.flags) = or(self.registers.a, self.registers.c);
+                4
             }
             0xB2 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'D', 'immediate': True}]
@@ -2005,8 +2017,8 @@ impl Cpu {
                 // []
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("EI ");
-                anyhow::bail!("opcode EI  not implemented")
-                // cycles: [4]
+                self.ime = true;
+                4
             }
             0xFC => {
                 // []
@@ -2043,7 +2055,7 @@ impl Cpu {
         Ok(n_cycles)
     }
 
-    // #[tracing::instrument(err, skip(memory))]
+    #[tracing::instrument(err, skip(memory))]
     fn step_prefixed(&mut self, memory: &mut Memory) -> Result<u8> {
         let opcode = self.fetch_imm8(memory)?;
         // tracing::trace!("prefix_opcode = {:08b}", opcode);

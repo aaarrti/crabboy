@@ -121,6 +121,10 @@ impl Header {
         let cartridge_type = &data[0x147];
         let cartridge_type: CartridgeType = (*cartridge_type).try_into()?;
 
+        tracing::info!("cartridge_type = {:?}", cartridge_type);
+
+        anyhow::ensure!(cartridge_type == CartridgeType::RomOnly);
+
         let rom_size = data[0x148] as usize;
         // This byte indicates how much ROM is present on the cartridge.
         // In most cases, the ROM size is given by 32 KiB × (1 << <value>):

@@ -35,7 +35,7 @@ fn setup_tracing() {
         .compact()
         .with_ansi(true)
         .with_line_number(true)
-        .with_filter(EnvFilter::default());
+        .with_filter(EnvFilter::new("info"));
     tracing_subscriber::registry().with(stdout_layer).init();
 }
 

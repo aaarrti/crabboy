@@ -10,6 +10,8 @@ trait HighAddr {
 }
 
 impl HighAddr for u8 {
+
+
     fn high_addr(&self) -> u16 {
         (*self as u16) + HIGH_ADDRESS
     }
@@ -56,6 +58,7 @@ struct Registers {
 }
 
 impl Registers {
+
     fn bc(&self) -> u16 {
         join_u16(self.c, self.b)
     }

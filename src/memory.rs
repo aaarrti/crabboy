@@ -2,6 +2,7 @@ use crate::cartridge::Cartridge;
 use crate::util::{is_nth_bit_set, set_nth_bit};
 use derivative::Derivative;
 use std::fmt::Debug;
+use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
 const BOOT_ROM_END: usize = 0x00FF;
 const ROM_0_END: usize = 0x3FFF;
@@ -141,9 +142,6 @@ const TILE_DATA_END: usize = 0x97FF;
 const BG_MAP_0_START: usize = 0x9800;
 const BG_MAP_0_END: usize = 0x9BFF;
 const BOOT_ROM_DISABLE_REG: usize = 0xFF50;
-
-const WIDTH: usize = 160;
-const HEIGHT: usize = 144;
 
 /// Interrupt Handling
 /// The IF bit corresponding to this interrupt and the IME flag are reset by the CPU. The former “acknowledges” the interrupt, while the latter prevents any further interrupts from being handled until the program re-enables them, typically by using the reti instruction.
@@ -468,6 +466,8 @@ impl Memory {
     /// BGP, OBP0, OBP1         # 0xFF47..0xFF49 (DMG palettes)
     /// frame[144][160]         # store DMG shade 0..3 (or expand to RGBA after)
     pub fn decode_framebuffer(&self) -> Vec<u8> {
+        const WIDTH: usize = DISPLAY_WIDTH as usize;
+        const  HEIGHT: usize = DISPLAY_HEIGHT as usize;
         let mut frame: [[u8; WIDTH]; HEIGHT] = [[0; WIDTH]; HEIGHT];
         let mut frame_meta_coloridx: [[u8; WIDTH]; HEIGHT] = [[0; WIDTH]; HEIGHT];
 
@@ -913,6 +913,7 @@ impl Registers {
         // .contains(&address)
     }
 
+    #[inline(always)]
     pub fn get_pending_interrupt(&self) -> Option<InterruptSource> {
         // If IME and IE allow the servicing of more than one of the requested interrupts,
         // the interrupt with the highest priority is serviced first.
@@ -1488,10 +1489,10 @@ impl Nr50 {
 
 #[derive(Debug, Default)]
 pub struct Stat {
-    coincidence_ir_enable: bool,
-    oam_ir_enable: bool,
+    pub coincidence_ir_enable: bool,
+    pub oam_ir_enable: bool,
     pub v_blank_ir_enable: bool,
-    h_blank_ir_enable: bool,
+    pub h_blank_ir_enable: bool,
     lyc_ly: bool,
     pub mode: StatMode,
 }
@@ -1516,7 +1517,7 @@ impl Stat {
 /// The STAT register itself is read-only for the mode bits — the PPU sets them automatically depending on the current scanline timing.
 /// You can only control the interrupt enable bits (STAT[3–6]).
 /// Emulators typically initialize LY = 0 and mode = 2 at boot.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Copy, Clone)]
 pub enum StatMode {
     Hblank,
     Vblank,

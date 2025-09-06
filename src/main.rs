@@ -15,8 +15,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 const SCALE_FACTOR: u32 = 3;
 // real GB screnn is 160×144, linearly scale it up linearly;
-const DISPLAY_HEIGHT: u32 = 160 * SCALE_FACTOR;
-const DISPLAY_WIDTH: u32 = 144 * SCALE_FACTOR;
+const DISPLAY_HEIGHT: u32 = 160;
+const DISPLAY_WIDTH: u32 = 144;
 
 static HALT_REQ: AtomicBool = AtomicBool::new(false);
 

@@ -1,9 +1,7 @@
 use crate::cartridge::Cartridge;
-use crate::util::is_nth_bit_set;
-use anyhow::Result;
+use crate::util::{is_nth_bit_set, set_nth_bit};
 use derivative::Derivative;
-use std::fmt::{Debug, Formatter};
-use std::vec;
+use std::fmt::Debug;
 
 const BOOT_ROM_END: usize = 0x00FF;
 const ROM_0_END: usize = 0x3FFF;
@@ -231,8 +229,7 @@ pub struct Memory {
 }
 
 impl Memory {
-    #[tracing::instrument(err)]
-    pub fn new(cartridge: Cartridge, boot_rom: Vec<u8>) -> Result<Self> {
+    pub fn new(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
         let mut rom_0 = [0; ROM_0_END + 1];
         let vram = Vram::new();
         let wram = Wram::new();
@@ -250,7 +247,7 @@ impl Memory {
         let mut boot_rom_ = [0; BOOT_ROM_END + 1];
         boot_rom_.copy_from_slice(&data[0..=BOOT_ROM_END]);
 
-        let memory = Memory {
+        Memory {
             boot_rom: boot_rom_,
             rom_0,
             vram,
@@ -261,17 +258,14 @@ impl Memory {
             io_,
             boot_rom_mapped: true,
             oam: ObjectAttributeMemory::default(),
-        };
-
-        Ok(memory)
+        }
     }
 
-    //#[tracing::instrument(skip(self), err)]
-    pub fn read(&self, address: u16) -> Result<u8> {
+    pub fn read(&self, address: u16) -> u8 {
         let address = address as usize;
 
         if self.boot_rom_mapped && address <= BOOT_ROM_END {
-            return Ok(self.boot_rom[address]);
+            return self.boot_rom[address];
         }
         if Registers::matches(address) {
             // tracing::debug!("Read from hardware register at: {:#04x}", address);
@@ -280,43 +274,43 @@ impl Memory {
 
         if address <= ROM_0_END {
             let limit = self.cartridge.header.rom_size;
-            anyhow::ensure!(
-                address < limit,
-                "Address {:#x} out of bounds for ROM size {:#x}",
-                address,
-                limit
-            );
-            return Ok(self.rom_0[address]);
+            if address >= limit {
+                panic!(
+                    "Address {:#x} out of bounds for ROM size {:#x}",
+                    address, limit
+                );
+            }
+            return self.rom_0[address];
         }
 
         if (ROM_N_START..=ROM_N_END).contains(&address) {
             // let address = address - ROM_N_START;
             // return Ok(self.rom_n[address]);
-            anyhow::bail!("ROM n not implemeted")
+            panic!("ROM n not implemeted")
         }
 
         if Vram::matches(address) {
-            return Ok(self.vram.read(address));
+            return self.vram.read(address);
         };
 
         if (EX_RAM_START..=EX_RAM_END).contains(&address) {
-            anyhow::bail!("EX RAM no implemeted");
+            panic!("EX RAM no implemeted");
         }
 
         if Wram::matches(address) {
-            return Ok(self.wram.read(address));
+            return self.wram.read(address);
         }
 
         if (ECHO_RAM_START..=ECHO_RAM_END).contains(&address) {
-            anyhow::bail!("Illegal read to ECHO RAM at {:#04x}", address)
+            panic!("Illegal read to ECHO RAM at {:#04x}", address)
         }
 
         if (OAM_START..=OAM_END).contains(&address) {
-            anyhow::bail!("OAM read not implemted")
+            panic!("OAM read not implemted")
         }
 
         if (NOT_USABLE_START..=NOT_USABLE_END).contains(&address) {
-            anyhow::bail!("Illegal read to NOT USABLE at {:#04x}", address)
+            panic!("Illegal read to NOT USABLE at {:#04x}", address)
         }
 
         if IoMem::matches(address) {
@@ -324,14 +318,14 @@ impl Memory {
         }
 
         if Hram::matches(address) {
-            return Ok(self.hram.read(address));
+            return self.hram.read(address);
         }
 
-        anyhow::bail!("Illegal address = {:#04x}", address);
+        panic!("Illegal address = {:#04x}", address);
     }
 
     //#[tracing::instrument(skip(self), err)]
-    pub fn write(&mut self, address: u16, value: u8) -> Result<()> {
+    pub fn write(&mut self, address: u16, value: u8) {
         let address = address as usize;
 
         if address == BOOT_ROM_DISABLE_REG {
@@ -339,11 +333,11 @@ impl Memory {
             if self.boot_rom_mapped && value != 0x0 {
                 tracing::info!("Boot ROM done executing!");
                 self.boot_rom_mapped = false;
-                return Ok(());
+                return;
             }
         }
         if address <= BOOT_ROM_END {
-            anyhow::bail!("Illegal write to boot ROM at {:#04x}", address);
+            panic!("Illegal write to boot ROM at {:#04x}", address);
         }
         // }
         if Registers::matches(address) {
@@ -354,40 +348,40 @@ impl Memory {
         if address == BANK_SELECT_REGISTER {
             // thos writes are handled by MBC on cartridge
             // rom only cartridge - no bank switch, just ignore
-            return Ok(());
+            return;
         }
 
         if address == IE_REG {
-            anyhow::bail!("IE REG write not implemented");
+            panic!("IE REG write not implemented");
         }
 
         if address <= ROM_0_END {
-            anyhow::bail!("Illegal rite to ROM bank 0 at {:#04x}", address)
+            panic!("Illegal rite to ROM bank 0 at {:#04x}", address)
         }
 
         if (ROM_N_START..=ROM_N_END).contains(&address) {
-            anyhow::bail!("Illegal write to ROM bank n at {:#04x}", address)
+            panic!("Illegal write to ROM bank n at {:#04x}", address)
         }
 
         if Vram::matches(address) {
             self.vram.write(address, value);
-            return Ok(());
+            return;
         }
 
         if (EX_RAM_START..=EX_RAM_END).contains(&address) {
             // let address = address - WRAM_START;
             // self.ex_ram[address] = value;
             // return Ok(());
-            anyhow::bail!("EX RAM no implemeted");
+            panic!("EX RAM no implemeted");
         }
 
         if Wram::matches(address) {
             self.wram.write(address, value);
-            return Ok(());
+            return;
         }
 
         if (ECHO_RAM_START..=ECHO_RAM_END).contains(&address) {
-            anyhow::bail!("Illegal access to ECHO RAM at {:#04x}", address)
+            panic!("Illegal access to ECHO RAM at {:#04x}", address)
         }
 
         if (OAM_START..=OAM_END).contains(&address) {
@@ -398,14 +392,13 @@ impl Memory {
 
                 mode => {
                     tracing::warn!("Blocking OAM write during mode = {:?}", mode);
-                    Ok(())
                 }
             };
         }
 
         if (NOT_USABLE_START..=NOT_USABLE_END).contains(&address) {
             tracing::debug!("Illegal write to NOT USABLE at {:#04x}", address);
-            return Ok(());
+            return;
         }
 
         if IoMem::matches(address) {
@@ -414,10 +407,10 @@ impl Memory {
 
         if Hram::matches(address) {
             self.hram.write(address, value);
-            return Ok(());
+            return;
         }
 
-        anyhow::bail!("Illegal address = {:#04x}", address)
+        panic!("Illegal address = {:#04x}", address)
     }
 
     fn tile_data_base_and_index(&self, tile_index: u8) -> u16 {
@@ -715,7 +708,7 @@ impl Default for ObjectAttributeMemory {
 }
 
 impl ObjectAttributeMemory {
-    fn write(&mut self, address: usize, value: u8) -> Result<()> {
+    fn write(&mut self, address: usize, value: u8) {
         // index = addr - 0xFE00   // 0–159
         // sprite_id = index / 4   // 0–39
         // field = index % 4       // 0..=3
@@ -742,10 +735,8 @@ impl ObjectAttributeMemory {
                 sprite.attr = value;
             }
 
-            _ => anyhow::bail!("this is unexpected"),
+            _ => panic!("this is unexpected"),
         }
-
-        Ok(())
     }
 }
 
@@ -816,26 +807,45 @@ impl IoMem {
         [0xFF77, 0xFF76, 0xFF71, 0xFF70].contains(&address)
     }
 
-    fn read(&self, address: usize) -> Result<u8> {
-        anyhow::bail!("Not implemented IO read at: {:#04x}", address)
+    fn read(&self, address: usize) -> u8 {
+        panic!("Not implemented IO read at: {:#04x}", address)
     }
 
-    fn write(&mut self, address: usize, _value: u8) -> Result<()> {
+    fn write(&mut self, address: usize, _value: u8) {
         if IoMem::is_unmapped(address) {
             // not documented,so NOOP
             tracing::debug!("Write to undocumented IO at: {:#04x}", address);
-            return Ok(());
+            return;
         }
 
-        anyhow::bail!("Not implemented IO write at: {:#04x}", address)
+        panic!("Not implemented IO write at: {:#04x}", address)
     }
 }
+
+const VBLANK_IR_BIT: usize = 0;
+const LCD_IR_BIT: usize = 1;
+const TIMER_IR_BIT: usize = 2;
+const SERIAL_IR_BIT: usize = 3;
+
+const JOYPAD_IR_BIT: usize = 4;
 
 #[derive(Derivative, Default)]
 #[derivative(Debug)]
 pub struct Registers {
-    if_: IfReg,
-    ie: IeReg,
+    /// pending interrupts
+    /// vblank   0
+    ///  lcd      1
+    ///  timer    2
+    ///  serial   3
+    ///  joypad   4
+    if_: u8,
+    /// interrupt enable
+    /// vblank   0
+    ///  lcd      1
+    ///  timer    2
+    ///  serial   3
+    ///  joypad   4
+    ie: u8,
     // These two registers specify the top-left coordinates of
     // the visible 160×144 pixel area within the 256×256 pixels BG map. Values in the range 0–255 may be used.
     scx: u8,
@@ -889,38 +899,44 @@ pub struct Registers {
 
 impl Registers {
     fn matches(address: usize) -> bool {
-        [
-            P1_REG, SB_REG, SC_REG, DIV_REG, TIMA_REG, TMA_REG, TAC_REG, IF_REG, NR_10_REG,
-            NR_11_REG, NR_12_REG, NR_13_REG, NR_14_REG, NR_21_REG, NR_22_REG, NR_23_REG, NR_24_REG,
-            NR_30_REG, NR_31_REG, NR_32_REG, NR_33_REG, NR_34_REG, NR_41_REG, NR_42_REG, NR_43_REG,
-            NR_44_REG, NR_50_REG, NR_51_REG, NR_52_REG, LCDC_REG, STAT_REG, SCY_REG, SCX_REG,
-            LY_REG, LYC_REG, DMA_REG, BGP_REG, OBP0_REG, OBP1_REG, WY_REG, WX_REG, IE_REG,
-        ]
-        .contains(&address)
+        (P1_REG..=NR_52_REG).contains(&address)
+            || (LCDC_REG..=WX_REG).contains(&address)
+            || address == IE_REG
+
+        //[
+        //    P1_REG, SB_REG, SC_REG, DIV_REG, TIMA_REG, TMA_REG, TAC_REG, IF_REG, NR_10_REG,
+        //    NR_11_REG, NR_12_REG, NR_13_REG, NR_14_REG, NR_21_REG, NR_22_REG, NR_23_REG, NR_24_REG,
+        //    NR_30_REG, NR_31_REG, NR_32_REG, NR_33_REG, NR_34_REG, NR_41_REG, NR_42_REG, NR_43_REG,
+        //    NR_44_REG, NR_50_REG, NR_51_REG, NR_52_REG, LCDC_REG, STAT_REG, SCY_REG, SCX_REG,
+        //    LY_REG, LYC_REG, DMA_REG, BGP_REG, OBP0_REG, OBP1_REG, WY_REG, WX_REG, IE_REG,
+        // ]
+        // .contains(&address)
     }
 
     pub fn get_pending_interrupt(&self) -> Option<InterruptSource> {
-        //let mut irs: Vec<InterruptSource> = Vec::with_capacity(5);
-
         // If IME and IE allow the servicing of more than one of the requested interrupts,
         // the interrupt with the highest priority is serviced first.
         // The priorities follow the order of the bits in the IE and IF registers:
         // Bit 0 (VBlank) has the highest priority,
         // and Bit 4 (Joypad) has the lowest priority.
 
-        if self.if_.joypad && self.ie.joypad {
-            Some(InterruptSource::Joypad)
-        } else if self.if_.serial && self.ie.serial {
-            Some(InterruptSource::Serial)
-        } else if self.if_.timer && self.ie.timer {
-            Some(InterruptSource::Timer)
-        } else if self.if_.lcd && self.ie.lcd {
-            Some(InterruptSource::Stat)
-        } else if self.if_.vblank && self.ie.vblank {
-            Some(InterruptSource::VBlank)
-        } else {
-            None
+        let pending = self.if_ & self.ie;
+        if pending == 0 {
+            return None;
         }
+        // isolate lowest set bit (VBlank first): x & -x
+        let lsb = pending & pending.wrapping_neg();
+
+        // map bit mask -> enum (fast small match; compiles to a few instrs)
+        let src = match lsb {
+            0x01 => InterruptSource::VBlank, // bit 0
+            0x02 => InterruptSource::Stat,   // bit 1
+            0x04 => InterruptSource::Timer,  // bit 2
+            0x08 => InterruptSource::Serial, // bit 3
+            0x10 => InterruptSource::Joypad, // bit 4
+            _ => return None,                // unknown/unused bits
+        };
+        Some(src)
     }
 
     pub fn inc_timer(&mut self, n_cycles: u8) {
@@ -950,11 +966,10 @@ impl Registers {
         std::time::Duration::from_micros(duration)
     }
 
-    // #[tracing::instrument(skip(self), err)]
-    fn read(&self, address: usize) -> Result<u8> {
+    fn read(&self, address: usize) -> u8 {
         let value = match address {
-            IF_REG => self.if_.get(),
-            IE_REG => self.ie.get(),
+            IF_REG => self.if_,
+            IE_REG => self.ie,
 
             LY_REG => self.ly,
 
@@ -965,22 +980,21 @@ impl Registers {
             SCY_REG => self.scy,
 
             _ => {
-                anyhow::bail!("Not implemented read: {:#x}", address)
+                panic!("Not implemented read: {:#x}", address)
             }
         };
 
-        Ok(value)
+        value
     }
 
-    // #[tracing::instrument(skip(self), err)]
-    fn write(&mut self, address: usize, value: u8) -> Result<()> {
+    fn write(&mut self, address: usize, value: u8) {
         match address {
             IF_REG => {
-                self.if_.set(value);
+                self.if_ = value;
             }
 
             IE_REG => {
-                self.ie.set(value);
+                self.ie = value;
             }
 
             SB_REG => {
@@ -1004,7 +1018,7 @@ impl Registers {
             }
 
             TAC_REG => {
-                self.tac.set(value)?;
+                self.tac.set(value);
             }
 
             BGP_REG => {
@@ -1024,7 +1038,7 @@ impl Registers {
             }
 
             LY_REG => {
-                anyhow::bail!("LCD Y coordinate is read only")
+                panic!("LCD Y coordinate is read only")
             }
 
             P1_REG => {
@@ -1044,7 +1058,7 @@ impl Registers {
             }
 
             NR_50_REG => {
-                self.nr50.set(value)?;
+                self.nr50.set(value);
             }
 
             STAT_REG => {
@@ -1072,38 +1086,36 @@ impl Registers {
             }
 
             _ => {
-                anyhow::bail!("Not implemented write: {:#x}", address)
+                panic!("Not implemented write: {:#x}", address)
             }
         }
-
-        Ok(())
     }
 
     pub fn request_interrupt(&mut self, interrupt_source: &InterruptSource) {
         match interrupt_source {
             InterruptSource::VBlank => {
-                if self.ie.vblank {
-                    self.if_.vblank = true;
+                if is_nth_bit_set(self.ie, VBLANK_IR_BIT) {
+                    self.if_ = set_nth_bit(self.if_, VBLANK_IR_BIT);
                 }
             }
             InterruptSource::Stat => {
-                if self.ie.lcd {
-                    self.if_.lcd = true;
+                if is_nth_bit_set(self.ie, LCD_IR_BIT) {
+                    self.if_ = set_nth_bit(self.if_, LCD_IR_BIT);
                 }
             }
             InterruptSource::Timer => {
-                if self.ie.timer {
-                    self.if_.timer = true;
+                if is_nth_bit_set(self.ie, TIMER_IR_BIT) {
+                    self.if_ = set_nth_bit(self.if_, TIMER_IR_BIT);
                 }
             }
             InterruptSource::Serial => {
-                if self.ie.serial {
-                    self.if_.serial = true;
+                if is_nth_bit_set(self.ie, SERIAL_IR_BIT) {
+                    self.if_ = set_nth_bit(self.if_, SERIAL_IR_BIT);
                 }
             }
             InterruptSource::Joypad => {
-                if self.if_.joypad {
-                    self.if_.joypad = true;
+                if is_nth_bit_set(self.ie, JOYPAD_IR_BIT) {
+                    self.if_ = set_nth_bit(self.if_, JOYPAD_IR_BIT);
                 }
             }
         }
@@ -1113,18 +1125,19 @@ impl Registers {
         let coinc_now = self.ly == self.lyc;
         self.stat.lyc_ly = coinc_now;
         if coinc_now && self.stat.coincidence_ir_enable {
-            self.if_.lcd = true;
+            self.if_ = set_nth_bit(self.if_, LCD_IR_BIT);
         }
     }
 
     pub fn acknowledge_interrupt(&mut self, interrupt: &InterruptSource) {
-        match interrupt {
-            InterruptSource::VBlank => self.if_.vblank = false,
-            InterruptSource::Stat => self.if_.lcd = false,
-            InterruptSource::Timer => self.if_.timer = false,
-            InterruptSource::Serial => self.if_.serial = false,
-            InterruptSource::Joypad => self.if_.joypad = false,
-        }
+        let bit_idx = match interrupt {
+            InterruptSource::VBlank => VBLANK_IR_BIT,
+            InterruptSource::Stat => LCD_IR_BIT,
+            InterruptSource::Timer => TIMER_IR_BIT,
+            InterruptSource::Serial => SERIAL_IR_BIT,
+            InterruptSource::Joypad => JOYPAD_IR_BIT,
+        };
+        self.if_ = set_nth_bit(self.if_, bit_idx);
     }
 
     fn map_palette_dmg(&self, idx: u8) -> u8 {
@@ -1248,7 +1261,7 @@ impl Default for ClockSource {
 }
 
 impl TimerControl {
-    fn set(&mut self, value: u8) -> Result<()> {
+    fn set(&mut self, value: u8) {
         self.enable = is_nth_bit_set(value, 2);
 
         let clock_select = value & 0b_0000_0011;
@@ -1267,7 +1280,7 @@ impl TimerControl {
             2 => (16, 65536),
             3 => (64, 16384),
             _ => {
-                anyhow::bail!("Unsupported clock select {:#04x}", clock_select)
+                panic!("Unsupported clock select {:#04x}", clock_select)
             }
         };
 
@@ -1275,8 +1288,6 @@ impl TimerControl {
             increment_every: cycle,
             frequency: freq,
         };
-
-        Ok(())
     }
 }
 
@@ -1346,79 +1357,6 @@ enum ObjSize {
     #[default]
     Size8x8,
     Size8x16,
-}
-
-/// When an interrupt request signal (some internal wire going from the PPU/APU/… to the CPU)
-/// changes from low to high, the corresponding bit in the IF register becomes set.
-#[derive(Debug, Default)]
-pub struct IfReg {
-    joypad: bool,
-    serial: bool,
-    timer: bool,
-    lcd: bool,
-    pub vblank: bool,
-}
-
-/// Controls whether the ? interrupt handler may be called
-#[derive(Debug, Default)]
-pub struct IeReg {
-    joypad: bool,
-    serial: bool,
-    timer: bool,
-    /// same as stat
-    pub lcd: bool,
-    vblank: bool,
-}
-
-impl IeReg {
-    fn set(&mut self, value: u8) {
-        self.vblank = is_nth_bit_set(value, 0);
-        self.lcd = is_nth_bit_set(value, 1);
-        self.timer = is_nth_bit_set(value, 2);
-        self.serial = is_nth_bit_set(value, 3);
-        self.joypad = is_nth_bit_set(value, 4);
-    }
-
-    fn get(&self) -> u8 {
-        (self.vblank as u8) + ((self.lcd as u8) << 1) + ((self.timer as u8) << 2)
-    }
-}
-
-impl IfReg {
-    fn set(&mut self, value: u8) {
-        if is_nth_bit_set(value, 0) {
-            tracing::debug!("Requesting VBlank interrupt");
-            self.vblank = true;
-        }
-
-        if is_nth_bit_set(value, 1) {
-            tracing::debug!("Requesting LCD interrupt");
-            self.lcd = true;
-        }
-
-        if is_nth_bit_set(value, 2) {
-            tracing::debug!("Requesting timer interrupt");
-            self.timer = true;
-        }
-
-        if is_nth_bit_set(value, 3) {
-            tracing::debug!("Requesting serial interrupt");
-            self.serial = true;
-        }
-
-        if is_nth_bit_set(value, 4) {
-            tracing::debug!("Requesting joypad interrupt");
-            self.joypad = true;
-        }
-    }
-
-    fn get(&self) -> u8 {
-        (self.vblank as u8)
-            + ((self.lcd as u8) << 1)
-            + ((self.timer as u8) << 2)
-            + ((self.serial as u8) << 3)
-            + ((self.joypad as u8) << 4)
-    }
 }
 
 #[derive(Default, Debug)]
@@ -1503,13 +1441,12 @@ impl Nr51 {
 #[derive(Debug, Default)]
 struct OutputLevel(u8);
 
-impl TryFrom<u8> for OutputLevel {
-    type Error = anyhow::Error;
-    fn try_from(value: u8) -> Result<Self> {
+impl From<u8> for OutputLevel {
+    fn from(value: u8) -> Self {
         if value <= 7 {
-            Ok(OutputLevel(value))
+            OutputLevel(value)
         } else {
-            anyhow::bail!("Output level must be in range [0, 7]")
+            panic!("Output level must be in range [0, 7]")
         }
     }
 }
@@ -1527,14 +1464,13 @@ struct Nr50 {
 }
 
 impl Nr50 {
-    fn set(&mut self, value: u8) -> Result<()> {
+    fn set(&mut self, value: u8) {
         let right_speaker: u8 = (value >> 4) & 0x0F;
-        self.right_speaker = right_speaker.try_into()?;
+        self.right_speaker = right_speaker.into();
         self.right_vin = is_nth_bit_set(value, 3);
         let left_speaker: u8 = value & 0x07; // 0x07 = 0000_0111
-        self.left_speaker = left_speaker.try_into()?;
+        self.left_speaker = left_speaker.into();
         self.left_vin = is_nth_bit_set(value, 0);
-        Ok(())
     }
 }
 

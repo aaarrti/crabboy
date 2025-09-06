@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
 
@@ -14,17 +13,15 @@ impl Debug for Cartridge {
 }
 
 impl Cartridge {
-    #[tracing::instrument(err)]
-    pub fn new(path: &PathBuf) -> Result<Self> {
-        let data: Vec<u8> = std::fs::read(path)?;
+    pub fn new(path: &PathBuf) -> Self {
+        let data: Vec<u8> = std::fs::read(path).expect("Failed to read cartridge");
         let data_slice = data.as_slice();
 
         // Each cartridge contains a header, located at the address range $0100—$014F.
 
         let header_slice = &data_slice[0..=0x014F];
-        let header = Header::new(header_slice)?;
-
-        Ok(Cartridge { data, header })
+        let header = Header::new(header_slice);
+        Cartridge { data, header }
     }
 }
 
@@ -79,16 +76,16 @@ pub struct Header {
 }
 
 impl Header {
-    #[tracing::instrument(err, skip(data))]
-    fn new(data: &[u8]) -> Result<Self> {
+    fn new(data: &[u8]) -> Self {
         let logo = &data[0x104..=0x133];
 
-        anyhow::ensure!(
-            logo == expected_logo(),
-            "Unexpected logo.\nexpected={:?}\nfound={:?}",
-            expected_logo(),
-            logo
-        );
+        if logo != expected_logo() {
+            panic!(
+                "Unexpected logo.\nexpected={:?}\nfound={:?}",
+                expected_logo(),
+                logo
+            )
+        }
 
         let title = &data[0x134..=0x143];
 
@@ -98,7 +95,7 @@ impl Header {
             .filter(|i| -> bool { *i != 0 })
             .collect();
 
-        let title = std::str::from_utf8(title.as_slice())?;
+        let title = std::str::from_utf8(title.as_slice()).expect("Failed to parse title");
         let title = title.trim().to_string();
 
         tracing::info!("title={:?}", title);
@@ -112,18 +109,22 @@ impl Header {
         // $C0	The game works on CGB only (the hardware ignores bit 6, so this really functions the same as $80)
 
         tracing::info!("GCB flag: {:#x}", gcb_flag);
-        anyhow::ensure!(*gcb_flag != 0xc0, "GCB mode not implemented");
+        if *gcb_flag == 0xc0 {
+            panic!("GCB mode not supported")
+        }
 
         let sgb_flag = &data[0x146];
 
         tracing::info!("SGB flag: {:#x}", sgb_flag);
 
         let cartridge_type = &data[0x147];
-        let cartridge_type: CartridgeType = (*cartridge_type).try_into()?;
+        let cartridge_type: CartridgeType = (*cartridge_type).into();
 
         tracing::info!("cartridge_type = {:?}", cartridge_type);
 
-        anyhow::ensure!(cartridge_type == CartridgeType::RomOnly);
+        if cartridge_type != CartridgeType::RomOnly {
+            panic!("ROM only cartridge is supported")
+        }
 
         let rom_size = data[0x148] as usize;
         // This byte indicates how much ROM is present on the cartridge.
@@ -135,21 +136,22 @@ impl Header {
 
         tracing::info!("RAM size: {:#x}", ram_size);
 
-        anyhow::ensure!(ram_size == 0, "RAM not implemented");
+        if ram_size != 0 {
+            panic!("RAM not implemented")
+        }
 
         let mut checksum: u8 = 0;
         for v in &data[0x0134..=0x014C] {
             checksum = checksum.wrapping_sub(*v).wrapping_sub(1);
         }
 
-        let header = Header {
+        Header {
             title,
             cartridge_type,
             rom_size,
             checksum,
             ram_size,
-        };
-        Ok(header)
+        }
     }
 }
 
@@ -159,9 +161,7 @@ pub enum CartridgeType {
     Mbc3RamBattery,
 }
 
-impl TryFrom<u8> for CartridgeType {
-    type Error = anyhow::Error;
-
+impl From<u8> for CartridgeType {
     /// Code   Type
     /// $00    ROM ONLY
     /// $01    MBC1
@@ -191,11 +191,11 @@ impl TryFrom<u8> for CartridgeType {
     /// $FD    BANDAI TAMA5
     /// $FE    HuC3
     /// $FF    HuC1+RAM+BATTERY
-    fn try_from(value: u8) -> Result<Self> {
+    fn from(value: u8) -> Self {
         match value {
-            0x0 => Ok(CartridgeType::RomOnly),
-            0x13 => Ok(CartridgeType::Mbc3RamBattery),
-            _ => Err(anyhow::anyhow!("Unsupported cartridge type: {:#x}", value)),
+            0x0 => CartridgeType::RomOnly,
+            0x13 => CartridgeType::Mbc3RamBattery,
+            _ => panic!("Unsupported cartridge type: {:#x}", value),
         }
     }
 }

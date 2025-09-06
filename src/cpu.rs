@@ -164,7 +164,6 @@ impl Cpu {
         Ok(value)
     }
 
-    //#[tracing::instrument(err, skip(memory))]
     pub fn service_interrupt(
         &mut self,
         interrupt: &InterruptSource,
@@ -3871,11 +3870,11 @@ impl Cpu {
         Ok(n_cycles)
     }
 
-    fn rst(&mut self, target: u8, memory: &mut Memory) -> Result<()> {
-        self.push_16stk(self.registers.pc, memory)?;
-        self.registers.pc = target as u16;
-        Ok(())
-    }
+    //fn rst(&mut self, target: u8, memory: &mut Memory) -> Result<()> {
+    //    self.push_16stk(self.registers.pc, memory)?;
+    //    self.registers.pc = target as u16;
+    //    Ok(())
+    //}
 }
 
 /// Split a 16-bit value into low and high bytes (little-endian)

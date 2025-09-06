@@ -1,6 +1,8 @@
 use crate::cartridge::Cartridge;
 use crate::util::is_nth_bit_set;
 use anyhow::Result;
+use derivative::Derivative;
+use std::fmt::{Debug, Formatter};
 use std::vec;
 
 const BOOT_ROM_END: usize = 0x00FF;
@@ -142,6 +144,9 @@ const BG_MAP_0_START: usize = 0x9800;
 const BG_MAP_0_END: usize = 0x9BFF;
 const BOOT_ROM_DISABLE_REG: usize = 0xFF50;
 
+const WIDTH: usize = 160;
+const HEIGHT: usize = 144;
+
 /// Interrupt Handling
 /// The IF bit corresponding to this interrupt and the IME flag are reset by the CPU. The former “acknowledges” the interrupt, while the latter prevents any further interrupts from being handled until the program re-enables them, typically by using the reti instruction.
 /// The corresponding interrupt handler (see the IE and IF register descriptions above) is called by the CPU. This is a regular call, exactly like what would be performed by a call <address> instruction (the current PC is pushed onto the stack and then set to the address of the interrupt handler).
@@ -261,7 +266,7 @@ impl Memory {
         Ok(memory)
     }
 
-    #[tracing::instrument(skip(self), err)]
+    //#[tracing::instrument(skip(self), err)]
     pub fn read(&self, address: u16) -> Result<u8> {
         let address = address as usize;
 
@@ -325,7 +330,7 @@ impl Memory {
         anyhow::bail!("Illegal address = {:#04x}", address);
     }
 
-    #[tracing::instrument(skip(self), err)]
+    //#[tracing::instrument(skip(self), err)]
     pub fn write(&mut self, address: u16, value: u8) -> Result<()> {
         let address = address as usize;
 
@@ -415,9 +420,225 @@ impl Memory {
         anyhow::bail!("Illegal address = {:#04x}", address)
     }
 
+    fn tile_data_base_and_index(&self, tile_index: u8) -> u16 {
+        let base: u16;
+        let offset: u16;
 
+        if self.registers.lcdc.bg_window_data_area {
+            base = 0x0000;
+            offset = tile_index as u16 * 16u16;
+        } else {
+            base = 0x1000;
+            offset = (sign_extend_i8(tile_index) as u16) * 16u16;
+        }
+        base + offset
+    }
+
+    fn bg_map_base(&self) -> u16 {
+        if self.registers.lcdc.bg_tile_map_area {
+            0x1C00
+        } else {
+            0x1800
+        }
+    }
+
+    fn win_map_base(&self) -> u16 {
+        if self.registers.lcdc.window_enable {
+            0x1C00
+        } else {
+            0x1800
+        }
+    }
+
+    fn fetch_tile_pixel(&self, tile_addr: usize, row_in_tile: usize, col_in_tile: usize) -> u8 {
+        // row_in_tile, col_in_tile in 0..7
+        let lo = self.vram.0[tile_addr + row_in_tile * 2];
+        let hi = self.vram.0[tile_addr + row_in_tile * 2 + 1];
+        let bit = 7 - col_in_tile;
+        let b0 = (lo >> bit) & 1;
+        let b1 = (hi >> bit) & 1;
+        // # 0..3 (color index)
+        (b1 << 1) | b0
+    }
+
+    fn sprite_height(&self) -> u8 {
+        match self.registers.lcdc.obj_size {
+            ObjSize::Size8x8 => 8,
+            ObjSize::Size8x16 => 16,
+        }
+    }
+
+    /// Inputs (conceptual)
+    /// vram[0x2000]            # DMG VRAM window (0x8000–0x9FFF mapped to 0..0x1FFF here)
+    /// oam[40]                 # 40 sprites, each {y,x,tile,attr}
+    /// LCDC, SCY, SCX, WY, WX  # 0xFF40..0xFF4B
+    /// BGP, OBP0, OBP1         # 0xFF47..0xFF49 (DMG palettes)
+    /// frame[144][160]         # store DMG shade 0..3 (or expand to RGBA after)
     pub fn decode_framebuffer(&self) -> Vec<u8> {
-        vec![]
+        let mut frame: [[u8; WIDTH]; HEIGHT] = [[0; WIDTH]; HEIGHT];
+        let mut frame_meta_coloridx: [[u8; WIDTH]; HEIGHT] = [[0; WIDTH]; HEIGHT];
+
+        for ly in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let bg_shade: u8;
+                let color_idx: u8;
+
+                if !self.registers.lcdc.lcd_ppu_enable
+                    || !self.registers.lcdc.bg_window_priority_enabled
+                {
+                    bg_shade = 0;
+                    color_idx = 0;
+                } else {
+                    let bx = self.registers.scx + x as u8;
+                    let by = self.registers.scy + ly as u8;
+                    let tile_x = bx >> 3;
+                    let tile_y = by >> 3;
+                    let row_in_tile = by & 7;
+                    let col_in_tile = bx & 7;
+
+                    let map_base = self.bg_map_base();
+                    let map_index_addr = map_base + (tile_y as u16) * 32 + tile_x as u16;
+                    let tile_index = self.vram.0[map_index_addr as usize];
+
+                    let tile_addr = self.tile_data_base_and_index(tile_index);
+                    color_idx = self.fetch_tile_pixel(
+                        tile_addr as usize,
+                        row_in_tile as usize,
+                        col_in_tile as usize,
+                    );
+                    bg_shade = self.registers.map_palette_dmg(color_idx);
+                }
+
+                frame[ly][x] = bg_shade;
+                frame_meta_coloridx[ly][x] = color_idx;
+            }
+
+            if self.registers.lcdc.window_enable && self.registers.ly >= self.registers.wy {
+                for x in 0..159 {
+                    if x >= (self.registers.wx - 7) {
+                        let wx = x - (self.registers.wx - 7);
+                        let wy = self.registers.ly - self.registers.wy;
+                        let tile_x = wx >> 3;
+                        let tile_y = wy >> 3;
+
+                        let row_in_tile = wy & 7;
+                        let col_in_tile = wx & 7;
+
+                        let map_base = self.win_map_base();
+                        let map_index_addr = map_base + (tile_y as u16) * 32 + tile_x as u16;
+                        let tile_index = self.vram.0[map_index_addr as usize];
+
+                        let tile_addr = self.tile_data_base_and_index(tile_index);
+                        let color_idx = self.fetch_tile_pixel(
+                            tile_addr as usize,
+                            row_in_tile as usize,
+                            col_in_tile as usize,
+                        );
+                        let shade = self.registers.map_palette_dmg(color_idx);
+
+                        frame[ly][x as usize] = shade;
+                        frame_meta_coloridx[ly][x as usize] = color_idx; // window replaces BG for priority purposes
+                    }
+                }
+            }
+
+            if self.registers.lcdc.obj_enable {
+                let h = self.sprite_height();
+
+                let mut candidates: Vec<u8> = Vec::with_capacity(10);
+
+                for i in 0..39 {
+                    let sy_on_screen = self.oam.sprites[i].y.wrapping_sub(16);
+                    if ly >= sy_on_screen as usize && ly < (sy_on_screen + h) as usize {
+                        candidates.push(i as u8);
+                    }
+                    if candidates.len() == 10 {
+                        break;
+                    }
+                }
+                // For each screen X, overlay sprites (first visible wins)
+                for i in candidates {
+                    let sx_on_screen = self.oam.sprites[i as usize].x.wrapping_sub(8);
+                    if sx_on_screen >= WIDTH as u8 {
+                        continue;
+                    }
+                    //let attr = self.oam.sprites[i as usize].attr;
+                    //let tile = self.oam.sprites[i as usize].tile;
+                    // 8x16: tile index points to pair; select top/bottom half
+                }
+
+                //
+                //     if h == 16:
+                //         # ignore tile bit0; top uses &~1, bottom uses |1
+                //         if (LY - sy_on_screen) < 8:
+                //             tile = tile & 0xFE
+                //             row_in_tile = (LY - sy_on_screen)
+                //         else:
+                //             tile = tile | 0x01
+                //             row_in_tile = (LY - sy_on_screen) - 8
+                //     else:
+                //         row_in_tile = (LY - sy_on_screen)
+                //
+                //     # Y-flip
+                //     if attr.bit6 == 1: row_in_tile = 7 - row_in_tile
+                //
+                //     # Determine VRAM tile address (sprite uses same tiledata mode as BG)
+                //     tile_addr = tiledata_base_and_index(tile, LCDC.bit4)
+                //
+                //     # For each X that sprite covers
+                //     for px in 0..7:
+                //         x = sx_on_screen + px
+                //         if x >= 160: continue
+                //
+                //         col = px
+                //         # X-flip
+                //         if attr.bit5 == 1: col = 7 - col
+                //
+                //         color_idx = fetch_tile_pixel(vram, tile_addr, row_in_tile, col)
+                //         if color_idx == 0: continue     # sprite color 0 is transparent
+                //
+                //         # choose palette
+                //         palette = (attr.bit4 == 1) ? OBP1 : OBP0
+                //         sprite_shade = map_palette_DMG(color_idx, palette)
+                //
+                //         # priority: attr bit7 = 1 means "behind BG" (but not behind BG color 0)
+                //         bg_idx_here = frame_meta_coloridx_at(LY,x)   # track per-pixel last BG/Win index
+                //         if attr.bit7 == 1 and bg_idx_here != 0:
+                //             continue  # hidden behind nonzero BG/Win
+                //
+                //         # draw and do NOT overwrite by later sprites (OAM priority)
+                //         frame[LY][x] = sprite_shade
+            }
+        }
+
+        /*
+            for LY in 0..143:
+        # 1) Background (unless LCDC.bit0==0; then use color 0 on DMG)
+        for x in 0..159:
+
+
+        # 2) Window overlay (if enabled and covering this LY)
+        if LCDC.bit6 == 1 and LY >= WY:
+
+
+        # 3) Sprites (if enabled)
+        if LCDC.bit1 == 1:
+            h = sprite_height(LCDC)
+
+            # Collect up to 10 sprites covering this LY, in OAM order
+            candidates = []
+            for i in 0..39:
+                sy_on_screen = oam[i].y.wrapping_sub(16)   # Y position
+                if LY >= sy_on_screen and LY < sy_on_screen + h:
+                    candidates.push(i)
+                    if candidates.len == 10: break
+
+
+                end for
+            end for
+            */
+
+        frame.iter().flatten().cloned().collect()
     }
 }
 
@@ -610,7 +831,8 @@ impl IoMem {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Derivative, Default)]
+#[derivative(Debug)]
 pub struct Registers {
     if_: IfReg,
     ie: IeReg,
@@ -618,6 +840,7 @@ pub struct Registers {
     // the visible 160×144 pixel area within the 256×256 pixels BG map. Values in the range 0–255 may be used.
     scx: u8,
     scy: u8,
+    #[derivative(Debug = "ignore")]
     sc: SerialControl,
     // These two registers specify the on-screen coordinates of the Window’s top-left pixel.
     wy: u8,
@@ -625,13 +848,18 @@ pub struct Registers {
     // div: Div,
     /// This timer is incremented at the clock frequency specified by the TAC register.
     /// When the value overflows it is reset to the value specified in TMA and an interrupt is requested, as described below.
+    #[derivative(Debug = "ignore")]
     tima: Tima,
     /// When TIMA overflows, it is reset to the value in this register and an interrupt is requested.
+    #[derivative(Debug = "ignore")]
     tma: Tma,
+    #[derivative(Debug = "ignore")]
     tac: TimerControl,
     // This register assigns gray shades to the color indices of the BG and Window tiles.
-    bgp: BgPallet,
+    bgp: u8,
+    #[derivative(Debug = "ignore")]
     ob_0: ObPallet,
+    #[derivative(Debug = "ignore")]
     ob_1: ObPallet,
     pub lcdc: LcdControl,
     /// LY indicates the current horizontal line, which might be about to be drawn,
@@ -640,14 +868,21 @@ pub struct Registers {
     pub ly: u8,
     /// The eight Game Boy action/direction buttons are arranged as a 2×4 matrix.
     /// Select either action or direction buttons by writing to this register, then read out the bits 0-3.
+    #[derivative(Debug = "ignore")]
     p1: Joypad,
     /// Audio Control
+    #[derivative(Debug = "ignore")]
     nr52: Nr52,
+    #[derivative(Debug = "ignore")]
     nr11: Nr11,
+    #[derivative(Debug = "ignore")]
     nr51: Nr51,
+    #[derivative(Debug = "ignore")]
     nr50: Nr50,
     pub stat: Stat,
+    #[derivative(Debug = "ignore")]
     nr13: Nr13,
+    #[derivative(Debug = "ignore")]
     nr14: Nr14,
     lyc: u8,
 }
@@ -664,8 +899,8 @@ impl Registers {
         .contains(&address)
     }
 
-    pub fn get_pending_interrupts(&mut self) -> Vec<InterruptSource> {
-        let mut irs: Vec<InterruptSource> = Vec::new();
+    pub fn get_pending_interrupt(&self) -> Option<InterruptSource> {
+        //let mut irs: Vec<InterruptSource> = Vec::with_capacity(5);
 
         // If IME and IE allow the servicing of more than one of the requested interrupts,
         // the interrupt with the highest priority is serviced first.
@@ -674,25 +909,18 @@ impl Registers {
         // and Bit 4 (Joypad) has the lowest priority.
 
         if self.if_.joypad && self.ie.joypad {
-            irs.push(InterruptSource::Joypad);
+            Some(InterruptSource::Joypad)
+        } else if self.if_.serial && self.ie.serial {
+            Some(InterruptSource::Serial)
+        } else if self.if_.timer && self.ie.timer {
+            Some(InterruptSource::Timer)
+        } else if self.if_.lcd && self.ie.lcd {
+            Some(InterruptSource::Stat)
+        } else if self.if_.vblank && self.ie.vblank {
+            Some(InterruptSource::VBlank)
+        } else {
+            None
         }
-
-        if self.if_.serial && self.ie.serial {
-            irs.push(InterruptSource::Serial);
-        }
-
-        if self.if_.timer && self.ie.timer {
-            irs.push(InterruptSource::Timer);
-        }
-
-        if self.if_.lcd && self.ie.lcd {
-            irs.push(InterruptSource::Stat);
-        }
-
-        if self.if_.vblank && self.ie.vblank {
-            irs.push(InterruptSource::VBlank);
-        }
-        irs
     }
 
     pub fn inc_timer(&mut self, n_cycles: u8) {
@@ -780,7 +1008,7 @@ impl Registers {
             }
 
             BGP_REG => {
-                self.bgp.set(value);
+                self.bgp = value;
             }
 
             OBP0_REG => {
@@ -898,6 +1126,10 @@ impl Registers {
             InterruptSource::Joypad => self.if_.joypad = false,
         }
     }
+
+    fn map_palette_dmg(&self, idx: u8) -> u8 {
+        (self.bgp >> (idx * 2)) & 0b11
+    }
 }
 
 /// This timer is incremented at the clock frequency specified by the TAC register ($FF07).
@@ -965,29 +1197,12 @@ struct ClockSource {
 }
 
 #[derive(Debug, Default)]
-struct BgPallet {
-    id_0: Color,
-    id_1: Color,
-    id_2: Color,
-    id_3: Color,
-}
-
-#[derive(Debug, Default)]
 enum Color {
     #[default]
     White,
     LightGray,
     DarkGray,
     Black,
-}
-
-impl BgPallet {
-    fn set(&mut self, value: u8) {
-        self.id_0 = (is_nth_bit_set(value, 1), is_nth_bit_set(value, 0)).into();
-        self.id_1 = (is_nth_bit_set(value, 3), is_nth_bit_set(value, 2)).into();
-        self.id_2 = (is_nth_bit_set(value, 5), is_nth_bit_set(value, 4)).into();
-        self.id_3 = (is_nth_bit_set(value, 7), is_nth_bit_set(value, 6)).into();
-    }
 }
 
 /// These registers assigns gray shades to the color indexes of the OBJs that use the corresponding palette.
@@ -1067,17 +1282,26 @@ impl TimerControl {
 
 #[derive(Debug, Default)]
 pub struct LcdControl {
+    /// bit 7
     pub lcd_ppu_enable: bool,
     // Window tile map area: 0 = 9800–9BFF; 1 = 9C00–9FFF
+    /// bit 6
     window_tile_map_area: (u16, u16),
+    /// bit 5
     window_enable: bool,
     // BG & Window tile data area: 0 = 8800–97FF; 1 = 8000–8FFF
-    bg_window_data_area: (u16, u16),
+    /// bit 4
+    bg_window_data_area: bool,
     // BG tile map area: 0 = 9800–9BFF; 1 = 9C00–9FFF
-    bg_tile_map_area: (u16, u16),
+    /// bit 3
+    bg_tile_map_area: bool,
     // OBJ size: 0 = 8×8; 1 = 8×16
+    /// bit 2
     obj_size: ObjSize,
+    /// bit 1
+    /// sprites enabled
     obj_enable: bool,
+    /// bit 0
     bg_window_priority_enabled: bool,
 }
 
@@ -1091,17 +1315,19 @@ impl LcdControl {
             ObjSize::Size8x8
         };
 
-        self.bg_tile_map_area = if is_nth_bit_set(value, 3) {
-            (0x9C00, 0x9FFF)
-        } else {
-            (0x9800, 0x9BFF)
-        };
+        self.bg_tile_map_area = is_nth_bit_set(value, 3);
+        //self.bg_tile_map_area = if is_nth_bit_set(value, 3) {
+        //    (0x9C00, 0x9FFF)
+        //} else {
+        //    (0x9800, 0x9BFF)
+        //};
 
-        self.bg_window_data_area = if is_nth_bit_set(value, 4) {
-            (0x8000, 0x8FFF)
-        } else {
-            (0x8800, 0x97FF)
-        };
+        self.bg_window_data_area = is_nth_bit_set(value, 4);
+        //self.bg_window_data_area = if is_nth_bit_set(value, 4) {
+        //    (0x8000, 0x8FFF)
+        //} else {
+        //    (0x8800, 0x97FF)
+        //};
 
         self.window_enable = is_nth_bit_set(value, 5);
 
@@ -1386,4 +1612,9 @@ impl Nr14 {
     fn set(&mut self, _value: u8) {
         tracing::warn!("Nr14 not implemented")
     }
+}
+
+#[inline(always)]
+fn sign_extend_i8(x: u8) -> i16 {
+    (x as i8) as i16
 }

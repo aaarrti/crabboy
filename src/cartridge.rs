@@ -135,14 +135,9 @@ impl Header {
 
         tracing::info!("RAM size: {:#x}", ram_size);
 
-        // anyhow::ensure!(ram_size == 0, "RAM not implemented");
+        anyhow::ensure!(ram_size == 0, "RAM not implemented");
 
-        //uint8_t checksum = 0;
-        // for (uint16_t address = 0x0134; address <= 0x014C; address++) {
-        //     checksum = checksum - rom[address] - 1;
-        // }
         let mut checksum: u8 = 0;
-
         for v in &data[0x0134..=0x014C] {
             checksum = checksum.wrapping_sub(*v).wrapping_sub(1);
         }

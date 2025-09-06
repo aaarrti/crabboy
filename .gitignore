@@ -8,6 +8,7 @@ data/
 .idea
 /data
 perf.data
+perf.data.old
 logs
-disassembly
-.idea
+data/disassembly
+*.svg

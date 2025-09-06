@@ -889,7 +889,7 @@ pub struct Registers {
 
 impl Registers {
     fn matches(address: usize) -> bool {
-        vec![
+        [
             P1_REG, SB_REG, SC_REG, DIV_REG, TIMA_REG, TMA_REG, TAC_REG, IF_REG, NR_10_REG,
             NR_11_REG, NR_12_REG, NR_13_REG, NR_14_REG, NR_21_REG, NR_22_REG, NR_23_REG, NR_24_REG,
             NR_30_REG, NR_31_REG, NR_32_REG, NR_33_REG, NR_34_REG, NR_41_REG, NR_42_REG, NR_43_REG,

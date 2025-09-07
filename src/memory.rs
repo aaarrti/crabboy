@@ -1049,7 +1049,7 @@ impl Registers {
             }
 
             SB_REG => {
-                tracing::debug!("Serial send: {:#x}", value);
+                // tracing::debug!("Serial send: {:?}", value as char);
             }
 
             SC_REG => {

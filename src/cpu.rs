@@ -197,6 +197,7 @@ impl Cpu {
     }
 
     /// return number of CPU T-cycles the step consumed
+    #[tracing::instrument(skip(memory))]
     pub fn step(&mut self, memory: &mut Memory) -> u8 {
         if self.registers.pc == GAME_START {
             tracing::info!("Reached game start!");
@@ -224,14 +225,14 @@ impl Cpu {
             0x05 => {
                 // [{'name': 'B', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
-                //tracing::trace!("DEC B");
+                tracing::trace!("DEC B");
                 (self.registers.b, self.flags) = dec(self.registers.b, &self.flags);
                 4
             }
             0x06 => {
                 // [{'name': 'B', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD B, n8");
+                tracing::trace!("LD B, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.b = imm8;
                 8
@@ -240,28 +241,28 @@ impl Cpu {
             0x0B => {
                 // [{'name': 'BC', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("DEC BC");
+                tracing::trace!("DEC BC");
                 self.registers.set_bc(self.registers.bc() - 1);
                 8
             }
             0x0C => {
                 // [{'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
-                //tracing::trace!("INC C");
+                tracing::trace!("INC C");
                 (self.registers.a, self.flags) = inc(self.registers.a, &self.flags);
                 4
             }
             0x0D => {
                 // [{'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
-                //tracing::trace!("DEC C");
+                tracing::trace!("DEC C");
                 (self.registers.c, self.flags) = dec(self.registers.c, &self.flags);
                 4
             }
             0x0E => {
                 // [{'name': 'C', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD C, n8");
+                tracing::trace!("LD C, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.c = imm8;
                 8
@@ -277,7 +278,7 @@ impl Cpu {
             0x11 => {
                 // [{'name': 'DE', 'immediate': True}, {'name': 'n16', 'bytes': 2, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD DE, n16");
+                tracing::trace!("LD DE, n16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.set_de(imm16);
                 12
@@ -286,7 +287,7 @@ impl Cpu {
             0x13 => {
                 // [{'name': 'DE', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("INC DE");
+                tracing::trace!("INC DE");
                 self.registers.set_de(self.registers.de() + 1);
                 8
             }
@@ -294,14 +295,14 @@ impl Cpu {
             0x15 => {
                 // [{'name': 'D', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
-                //tracing::trace!("DEC D");
+                tracing::trace!("DEC D");
                 (self.registers.d, self.flags) = dec(self.registers.d, &self.flags);
                 4
             }
             0x16 => {
                 // [{'name': 'D', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD D, n8");
+                tracing::trace!("LD D, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.d = imm8;
                 8
@@ -309,14 +310,14 @@ impl Cpu {
             0x17 => {
                 // []
                 // {'Z': '0', 'N': '0', 'H': '0', 'C': 'C'}
-                //tracing::trace!("RLA ");
+                tracing::trace!("RLA ");
                 (self.registers.a, self.flags) = rla(self.registers.a, &self.flags);
                 4
             }
             0x18 => {
                 // [{'name': 'e8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("JR e8");
+                tracing::trace!("JR e8");
                 let offset = self.fetch_imm8(memory);
                 self.registers.pc = jr(self.registers.pc, offset);
                 12
@@ -325,7 +326,7 @@ impl Cpu {
             0x1A => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'DE', 'immediate': False}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, (DE)");
+                tracing::trace!("LD A, (DE)");
                 let a = memory.read(self.registers.de());
                 self.registers.a = a;
                 8
@@ -334,21 +335,21 @@ impl Cpu {
             0x1C => {
                 // [{'name': 'E', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
-                //tracing::trace!("INC E");
+                tracing::trace!("INC E");
                 (self.registers.e, self.flags) = inc(self.registers.e, &self.flags);
                 4
             }
             0x1D => {
                 // [{'name': 'E', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
-                //tracing::trace!("DEC E");
+                tracing::trace!("DEC E");
                 (self.registers.e, self.flags) = dec(self.registers.e, &self.flags);
                 4
             }
             0x1E => {
                 // [{'name': 'E', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD E, n8");
+                tracing::trace!("LD E, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.e = imm8;
                 8
@@ -356,14 +357,14 @@ impl Cpu {
             0x1F => {
                 // []
                 // {'Z': '0', 'N': '0', 'H': '0', 'C': 'C'}
-                //tracing::trace!("RRA ");
+                tracing::trace!("RRA ");
                 (self.registers.a, self.flags) = rra(self.registers.a, self.flags.c);
                 4
             }
             0x20 => {
                 // [{'name': 'NZ', 'immediate': True}, {'name': 'e8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("JR NZ, e8");
+                tracing::trace!("JR NZ, e8");
                 let offset = self.fetch_imm8(memory);
 
                 if !self.flags.z {
@@ -376,7 +377,7 @@ impl Cpu {
             0x21 => {
                 // [{'name': 'HL', 'immediate': True}, {'name': 'n16', 'bytes': 2, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD HL, n16");
+                tracing::trace!("LD HL, n16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.set_hl(imm16);
                 12
@@ -384,7 +385,7 @@ impl Cpu {
             0x22 => {
                 // [{'name': 'HL', 'increment': True, 'immediate': False}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD HL, A");
+                tracing::trace!("LD HL, A");
                 memory.write(self.registers.hl(), self.registers.a);
                 self.registers.set_hl(self.registers.hl() + 1);
                 8
@@ -392,14 +393,14 @@ impl Cpu {
             0x23 => {
                 // [{'name': 'HL', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("INC HL");
+                tracing::trace!("INC HL");
                 self.registers.set_hl(self.registers.hl() + 1);
                 8
             }
             0x24 => {
                 // [{'name': 'H', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
-                //tracing::trace!("INC H");
+                tracing::trace!("INC H");
                 (self.registers.h, self.flags) = inc(self.registers.h, &self.flags);
                 4
             }
@@ -407,7 +408,7 @@ impl Cpu {
             0x28 => {
                 // [{'name': 'Z', 'immediate': True}, {'name': 'e8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("JR Z, e8");
+                tracing::trace!("JR Z, e8");
                 let offset = self.fetch_imm8(memory);
                 if self.flags.z {
                     self.registers.pc = jr(self.registers.pc, offset);
@@ -420,7 +421,7 @@ impl Cpu {
             0x2A => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'increment': True, 'immediate': False}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, (HL)+");
+                tracing::trace!("LD A, (HL)+");
                 self.registers.a = memory.read(self.registers.hl());
                 self.registers.set_hl(self.registers.hl() + 1);
                 8
@@ -428,14 +429,14 @@ impl Cpu {
             0x2B => {
                 // [{'name': 'HL', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("DEC HL");
+                tracing::trace!("DEC HL");
                 self.registers.set_hl(self.registers.hl() - 1);
                 8
             }
             0x2C => {
                 // [{'name': 'L', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
-                //tracing::trace!("INC L");
+                tracing::trace!("INC L");
                 (self.registers.l, self.flags) = inc(self.registers.l, &self.flags);
                 4
             }
@@ -443,7 +444,7 @@ impl Cpu {
             0x2E => {
                 // [{'name': 'L', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD L, n8");
+                tracing::trace!("LD L, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.l = imm8;
                 8
@@ -452,7 +453,7 @@ impl Cpu {
             0x31 => {
                 // [{'name': 'SP', 'immediate': True}, {'name': 'n16', 'bytes': 2, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD SP, n16");
+                tracing::trace!("LD SP, n16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.sp = imm16;
                 12
@@ -460,7 +461,7 @@ impl Cpu {
             0x32 => {
                 // [{'name': 'HL', 'decrement': True, 'immediate': False}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD (HL)-, A");
+                tracing::trace!("LD (HL)-, A");
                 memory.write(self.registers.hl(), self.registers.a);
                 self.registers.set_hl(self.registers.hl() - 1);
                 8
@@ -469,7 +470,7 @@ impl Cpu {
             0x36 => {
                 // [{'name': 'HL', 'immediate': False}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD (HL), n8");
+                tracing::trace!("LD (HL), n8");
                 let imm8 = self.fetch_imm8(memory);
                 memory.write(self.registers.hl(), imm8);
                 12
@@ -477,7 +478,7 @@ impl Cpu {
             0x37 => {
                 // []
                 // {'Z': '-', 'N': '0', 'H': '0', 'C': '1'}
-                //tracing::trace!("SCF ");
+                tracing::trace!("SCF ");
                 self.flags.c = true;
                 self.flags.n = false;
                 self.flags.h = false;
@@ -487,17 +488,23 @@ impl Cpu {
             0x3D => {
                 // [{'name': 'A', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
-                //tracing::trace!("DEC A");
+                tracing::trace!("DEC A");
                 (self.registers.a, self.flags) = dec(self.registers.a, &self.flags);
                 4
             }
             0x3E => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, n8");
+                tracing::trace!("LD A, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.a = imm8;
                 8
+            }
+
+            0x47 => {
+                tracing::trace!("LD B, A");
+                self.registers.b = self.registers.a;
+                4
             }
 
             0x49 => {
@@ -508,7 +515,7 @@ impl Cpu {
             0x4F => {
                 // [{'name': 'C', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD C, A");
+                tracing::trace!("LD C, A");
                 self.registers.c = self.registers.a;
                 4
             }
@@ -516,7 +523,7 @@ impl Cpu {
             0x57 => {
                 // [{'name': 'D', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD D, A");
+                tracing::trace!("LD D, A");
                 self.registers.d = self.registers.a;
                 4
             }
@@ -524,7 +531,7 @@ impl Cpu {
             0x67 => {
                 // [{'name': 'H', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD H, A");
+                tracing::trace!("LD H, A");
                 self.registers.h = self.registers.a;
                 4
             }
@@ -532,14 +539,14 @@ impl Cpu {
             0x77 => {
                 // [{'name': 'HL', 'immediate': False}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD (HL), A");
+                tracing::trace!("LD (HL), A");
                 memory.write(self.registers.hl(), self.registers.a);
                 8
             }
             0x78 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'B', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, B");
+                tracing::trace!("LD A, B");
                 self.registers.a = self.registers.b;
                 4
             }
@@ -547,28 +554,28 @@ impl Cpu {
             0x7B => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'E', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, E");
+                tracing::trace!("LD A, E");
                 self.registers.a = self.registers.e;
                 4
             }
             0x7C => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'H', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, H");
+                tracing::trace!("LD A, H");
                 self.registers.a = self.registers.h;
                 4
             }
             0x7D => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'L', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, L");
+                tracing::trace!("LD A, L");
                 self.registers.a = self.registers.l;
                 4
             }
             0x7E => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD A, (HL)");
+                tracing::trace!("LD A, (HL)");
                 self.registers.a = memory.read(self.registers.hl());
                 8
             }
@@ -581,7 +588,7 @@ impl Cpu {
             0x83 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'E', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': 'C'}
-                //tracing::trace!("ADD A, E");
+                tracing::trace!("ADD A, E");
                 (self.registers.a, self.flags) = add(self.registers.a, self.registers.e);
                 4
             }
@@ -589,7 +596,7 @@ impl Cpu {
             0x86 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': 'C'}
-                //tracing::trace!("ADD A, (HL)");
+                tracing::trace!("ADD A, (HL)");
                 let value = memory.read(self.registers.hl());
                 (self.registers.a, self.flags) = add(self.registers.a, value);
                 8
@@ -598,7 +605,7 @@ impl Cpu {
             0x89 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': 'C'}
-                //tracing::trace!("ADC A, C");
+                tracing::trace!("ADC A, C");
                 (self.registers.a, self.flags) = adc(self.registers.a, self.registers.c);
                 4
             }
@@ -606,7 +613,7 @@ impl Cpu {
             0x90 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'B', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': 'C'}
-                //tracing::trace!("SUB A, B");
+                tracing::trace!("SUB A, B");
                 (self.registers.a, self.flags) = sub(self.registers.a, self.registers.b);
                 4
             }
@@ -614,7 +621,7 @@ impl Cpu {
             0x96 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': 'C'}
-                //tracing::trace!("SUB A, (HL)");
+                tracing::trace!("SUB A, (HL)");
                 let addr = self.registers.hl();
                 let value = memory.read(addr);
                 self.registers.a -= value;
@@ -623,7 +630,7 @@ impl Cpu {
             0x97 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '1', 'N': '1', 'H': '0', 'C': '0'}
-                //tracing::trace!("SUB A, A");
+                tracing::trace!("SUB A, A");
                 self.registers.a -= self.registers.a;
                 self.flags = Flags {
                     z: true,
@@ -637,7 +644,7 @@ impl Cpu {
             0xA1 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '1', 'C': '0'}
-                //tracing::trace!("AND A, C");
+                tracing::trace!("AND A, C");
                 (self.registers.a, self.flags) = and(self.registers.a, self.registers.c);
                 4
             }
@@ -645,7 +652,7 @@ impl Cpu {
             0xA7 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '1', 'C': '0'}
-                //tracing::trace!("AND A, A");
+                tracing::trace!("AND A, A");
                 (self.registers.a, self.flags) = and(self.registers.a, self.registers.a);
                 4
             }
@@ -653,7 +660,7 @@ impl Cpu {
             0xAF => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '1', 'N': '0', 'H': '0', 'C': '0'}
-                //tracing::trace!("XOR A, A");
+                tracing::trace!("XOR A, A");
                 (self.registers.a, self.flags) = xor(self.registers.a, self.registers.a);
                 4
             }
@@ -661,7 +668,7 @@ impl Cpu {
             0xB1 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '0', 'C': '0'}
-                //tracing::trace!("OR A, C");
+                tracing::trace!("OR A, C");
                 (self.registers.a, self.flags) = or(self.registers.a, self.registers.c);
                 4
             }
@@ -669,7 +676,7 @@ impl Cpu {
             0xB5 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'L', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '0', 'C': '0'}
-                //tracing::trace!("OR A, L");
+                tracing::trace!("OR A, L");
                 (self.registers.a, self.flags) = or(self.registers.a, self.registers.l);
                 4
             }
@@ -677,21 +684,21 @@ impl Cpu {
             0xBE => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': 'C'}
-                //tracing::trace!("CP A, (HL)");
+                tracing::trace!("CP A, (HL)");
                 self.flags = cp(self.registers.a, memory.read(self.registers.hl()));
                 8
             }
             0xBF => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '1', 'N': '1', 'H': '0', 'C': '0'}
-                //tracing::trace!("CP A, A");
+                tracing::trace!("CP A, A");
                 self.flags = cp(self.registers.a, self.registers.a);
                 4
             }
             0xC0 => {
                 // [{'name': 'NZ', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("RET NZ");
+                tracing::trace!("RET NZ");
                 if !self.flags.z {
                     let addr = self.pop_16stk(memory);
                     self.registers.pc = addr;
@@ -703,7 +710,7 @@ impl Cpu {
             0xC1 => {
                 // [{'name': 'BC', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("POP BC");
+                tracing::trace!("POP BC");
                 let value = self.pop_16stk(memory);
                 self.registers.set_bc(value);
                 12
@@ -712,7 +719,7 @@ impl Cpu {
             0xC3 => {
                 // [{'name': 'a16', 'bytes': 2, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("JP a16");
+                tracing::trace!("JP a16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.pc = imm16;
                 16
@@ -721,7 +728,7 @@ impl Cpu {
             0xC5 => {
                 // [{'name': 'BC', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("PUSH BC");
+                tracing::trace!("PUSH BC");
                 self.push_16stk(self.registers.bc(), memory);
                 16
             }
@@ -729,7 +736,7 @@ impl Cpu {
             0xC9 => {
                 // []
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("RET ");
+                tracing::trace!("RET ");
                 let ret_addr = self.pop_16stk(memory);
                 self.registers.pc = ret_addr;
                 16
@@ -737,14 +744,14 @@ impl Cpu {
             0xCB => {
                 // []
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("PREFIX");
+                tracing::trace!("PREFIX");
                 let prefix_cycles = self.step_prefixed(memory);
                 4 + prefix_cycles
             }
             0xCD => {
                 // [{'name': 'a16', 'bytes': 2, 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("CALL a16");
+                tracing::trace!("CALL a16");
                 let imm16 = self.fetch_imm16(memory);
                 let return_addr = self.registers.pc + 1;
                 self.push_16stk(return_addr, memory);
@@ -755,7 +762,7 @@ impl Cpu {
             0xD5 => {
                 // [{'name': 'DE', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("PUSH DE");
+                tracing::trace!("PUSH DE");
                 self.push_16stk(self.registers.de(), memory);
                 16
             }
@@ -768,7 +775,7 @@ impl Cpu {
             0xE0 => {
                 // [{'name': 'a8', 'bytes': 1, 'immediate': False}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LDH a8, A");
+                tracing::trace!("LDH a8, A");
                 let imm8 = self.fetch_imm8(memory);
                 memory.write(imm8.high_addr(), self.registers.a);
                 12
@@ -777,7 +784,7 @@ impl Cpu {
             0xE2 => {
                 // [{'name': 'C', 'immediate': False}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LDH [C], A");
+                tracing::trace!("LDH [C], A");
                 memory.write(self.registers.c.high_addr(), self.registers.a);
                 8
             }
@@ -785,7 +792,7 @@ impl Cpu {
             0xE5 => {
                 // [{'name': 'HL', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("PUSH HL");
+                tracing::trace!("PUSH HL");
                 self.push_16stk(self.registers.hl(), memory);
                 16
             }
@@ -793,7 +800,7 @@ impl Cpu {
             0xEA => {
                 // [{'name': 'a16', 'bytes': 2, 'immediate': False}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LD (a16), A");
+                tracing::trace!("LD (a16), A");
                 let addr = self.fetch_imm16(memory);
                 memory.write(addr, self.registers.a);
                 16
@@ -802,7 +809,7 @@ impl Cpu {
             0xF0 => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'a8', 'bytes': 1, 'immediate': False}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("LDH A, a8");
+                tracing::trace!("LDH A, a8");
                 //if self.registers.pc == 0x65 {
                 //    tracing::debug!("Waiting for screen frame LY = {:#x}", memory.registers.ly);
                 //}
@@ -814,7 +821,7 @@ impl Cpu {
             0xF3 => {
                 // []
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("DI");
+                tracing::trace!("DI");
                 self.ime = false;
                 4
             }
@@ -822,7 +829,7 @@ impl Cpu {
             0xF5 => {
                 // [{'name': 'AF', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("PUSH AF");
+                tracing::trace!("PUSH AF");
                 self.push_16stk(self.register_af(), memory);
                 16
             }
@@ -830,7 +837,7 @@ impl Cpu {
             0xFB => {
                 // []
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
-                //tracing::trace!("EI ");
+                tracing::trace!("EI ");
                 self.ime = true;
                 4
             }
@@ -838,7 +845,7 @@ impl Cpu {
             0xFE => {
                 // [{'name': 'A', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': 'C'}
-                //tracing::trace!("CP A, n8");
+                tracing::trace!("CP A, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.flags = cp(self.registers.a, imm8);
                 8
@@ -853,7 +860,7 @@ impl Cpu {
             0x11 => {
                 // [{'name': 'C', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '0', 'C': 'C'}
-                //tracing::trace!("RL C");
+                tracing::trace!("RL C");
                 (self.registers.a, self.flags) = rl(self.registers.c, &self.flags, true);
                 8
             }
@@ -861,7 +868,7 @@ impl Cpu {
             0x7C => {
                 // [{'name': '7', 'immediate': True}, {'name': 'H', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': '1', 'C': '-'}
-                //tracing::trace!("BIT 7, H");
+                tracing::trace!("BIT 7, H");
                 self.flags.z = is_nth_bit_set(self.registers.h, 7);
                 self.flags.n = false;
                 self.flags.h = true;

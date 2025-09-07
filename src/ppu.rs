@@ -4,7 +4,7 @@ use glium::glutin::surface::WindowSurface;
 use glium::index::NoIndices;
 use glium::winit::platform::x11::EventLoopBuilderExtX11;
 use glium::winit::window::Window;
-use glium::{implement_vertex, winit, Display, Program, Texture2d, VertexBuffer};
+use glium::{implement_vertex, uniform, winit, Display, Program, Surface, Texture2d, VertexBuffer};
 
 const VERTEX_SHADER: &str = r#"
 #version 140
@@ -46,9 +46,9 @@ pub struct Ppu {
     texture: Texture2d,
     _window: Window,
     display: Display<WindowSurface>,
-    _vbo: VertexBuffer<Vertex>,
-    _indices: NoIndices,
-    _program: Program,
+    vbo: VertexBuffer<Vertex>,
+    indices: NoIndices,
+    program: Program,
 }
 
 impl Ppu {
@@ -66,8 +66,7 @@ impl Ppu {
             .with_title("crabboy")
             .build(&event_loop);
 
-        let program =
-            glium::Program::from_source(&display, VERTEX_SHADER, FRAGMENT_SHADER, None).unwrap();
+        let program = Program::from_source(&display, VERTEX_SHADER, FRAGMENT_SHADER, None).unwrap();
 
         let verts = vec![
             Vertex {
@@ -106,9 +105,9 @@ impl Ppu {
             texture: tex,
             _window,
             display,
-            _program: program,
-            _indices: indices,
-            _vbo: vbo,
+            program,
+            indices,
+            vbo,
         }
     }
 
@@ -210,36 +209,34 @@ impl Ppu {
             return;
         }
 
-        /*
+
         let fb = memory.decode_framebuffer();
         let fb = expand_gray_to_rgba_scaled(fb.as_slice());
 
         // Upload to texture (top-left origin in our buffer → use *_reversed)
         let raw = glium::texture::RawImage2d::from_raw_rgba_reversed(
             &fb,
-            (DISPLAY_WIDTH, DISPLAY_HEIGHT),
+            (DISPLAY_WIDTH * SCALE_FACTOR, DISPLAY_HEIGHT * SCALE_FACTOR),
         );
 
-        tex.write(
+        self.texture.write(
             glium::Rect {
                 left: 0,
                 bottom: 0,
-                width: DISPLAY_WIDTH,
-                height: DISPLAY_HEIGHT,
+                width: DISPLAY_WIDTH * SCALE_FACTOR,
+                height: DISPLAY_HEIGHT * SCALE_FACTOR,
             },
             raw,
         );
 
         // Draw
-        let mut frame = display.draw();
+        let mut frame = self.display.draw();
         let uniforms = uniform! {
-            fb: tex.sampled().magnify_filter(glium::uniforms::MagnifySamplerFilter::Nearest)
+            fb: self.texture.sampled().magnify_filter(glium::uniforms::MagnifySamplerFilter::Nearest)
                            .minify_filter(glium::uniforms::MinifySamplerFilter::Nearest),
         };
-        frame.draw(&vbo, indices, &program, &uniforms, &Default::default())?;
-        frame.finish()?;
-        */
-
+        frame.draw(&self.vbo, self.indices, &self.program, &uniforms, &Default::default()).unwrap();
+        frame.finish().unwrap();
         self.frame_ready = false;
     }
 }

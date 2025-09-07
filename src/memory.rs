@@ -2,6 +2,8 @@ use crate::cartridge::Cartridge;
 use crate::util::{is_nth_bit_set, set_nth_bit};
 use derivative::Derivative;
 use std::fmt::Debug;
+use std::path::PathBuf;
+use anyhow::{anyhow, Result};
 use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
 const BOOT_ROM_END: usize = 0x00FF;
@@ -220,14 +222,51 @@ pub struct Memory {
     // 2 banks together
     wram: Wram,
     hram: Hram,
-    pub cartridge: Cartridge,
+    //pub cartridge: Cartridge,
     boot_rom_mapped: bool,
     io_: IoMem,
     oam: ObjectAttributeMemory,
+    rom_size: usize
 }
 
 impl Memory {
-    pub fn new(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
+
+    fn from_test_rom(path: &PathBuf) -> Self {
+        let data: Vec<u8> = std::fs::read(path).unwrap();
+
+        let mut rom_0 = [0; ROM_0_END + 1];
+        let vram = Vram::new();
+        let wram = Wram::new();
+        let io_ = IoMem::default();
+
+        // mmap first 16KB
+        rom_0.copy_from_slice(&data[0..=ROM_0_END]);
+        // rom_n.copy_from_slice(&cartridge[ROM_N_START..ROM_N_END + 1]);
+
+        let hram = Hram::new();
+        let registers = Registers::default();
+
+
+        let boot_rom_ = [0; BOOT_ROM_END + 1];
+
+        Memory {
+            boot_rom: boot_rom_,
+            rom_0,
+            vram,
+            wram,
+            hram,
+            registers,
+            rom_size: data.len(),
+            io_,
+            boot_rom_mapped: false,
+            oam: ObjectAttributeMemory::default(),
+        }
+    }
+
+    fn from_cartridge(path: &PathBuf) -> Self {
+        let boot_rom: Vec<u8> = std::fs::read("data/boot.gb").unwrap();
+        let cartridge = Cartridge::new(path);
+
         let mut rom_0 = [0; ROM_0_END + 1];
         let vram = Vram::new();
         let wram = Wram::new();
@@ -252,10 +291,21 @@ impl Memory {
             wram,
             hram,
             registers,
-            cartridge,
+            //cartridge,
             io_,
             boot_rom_mapped: true,
             oam: ObjectAttributeMemory::default(),
+            rom_size: cartridge.header.rom_size
+        }
+
+    }
+
+
+    pub fn new(path: &PathBuf, test_rom: bool) -> Self {
+        if test_rom {
+            Memory::from_test_rom(path)
+        } else {
+            Memory::from_cartridge(path)
         }
     }
 
@@ -271,7 +321,7 @@ impl Memory {
         }
 
         if address <= ROM_0_END {
-            let limit = self.cartridge.header.rom_size;
+            let limit = self.rom_size;
             if address >= limit {
                 panic!(
                     "Address {:#x} out of bounds for ROM size {:#x}",
@@ -395,7 +445,7 @@ impl Memory {
         }
 
         if (NOT_USABLE_START..=NOT_USABLE_END).contains(&address) {
-            tracing::debug!("Illegal write to NOT USABLE at {:#04x}", address);
+            //tracing::warn!("Illegal write to NOT USABLE at {:#04x}", address);
             return;
         }
 
@@ -814,7 +864,7 @@ impl IoMem {
     fn write(&mut self, address: usize, _value: u8) {
         if IoMem::is_unmapped(address) {
             // not documented,so NOOP
-            tracing::debug!("Write to undocumented IO at: {:#04x}", address);
+            //tracing::warn!("Write to undocumented IO at: {:#04x}", address);
             return;
         }
 
@@ -960,7 +1010,7 @@ impl Registers {
         }
     }
 
-    pub fn cycle_duration(&self, n_cycles: u32) -> std::time::Duration {
+    pub fn cycle_duration(&self, n_cycles: u8) -> std::time::Duration {
         let n_cycles = n_cycles as f64;
         let period: f64 = 1f64 / self.tac.clock_select.frequency as f64;
         let duration = (n_cycles * period * 1_000_000f64) as u64;

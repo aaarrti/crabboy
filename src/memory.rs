@@ -1,10 +1,10 @@
 use crate::cartridge::Cartridge;
 use crate::util::{is_nth_bit_set, set_nth_bit};
 use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use anyhow::{anyhow, Result};
 use derivative::Derivative;
 use std::fmt::Debug;
 use std::path::PathBuf;
-use anyhow::{Result, anyhow};
 
 const ROM_0_END: usize = 0x3FFF;
 
@@ -310,8 +310,6 @@ impl Memory {
         memory
     }
 
-
-
     pub fn read(&self, address: u16) -> u8 {
         let address = address as usize;
 
@@ -409,6 +407,10 @@ impl Memory {
 
             HRAM_START..=HRAM_END => {
                 self.hram.write(address, value);
+            }
+
+            WRAM_START..=WRAM_END => {
+                self.wram.write(address, value);
             }
 
             _ => {
@@ -918,7 +920,6 @@ const SERIAL_IR_BIT: usize = 3;
 
 const JOYPAD_IR_BIT: usize = 4;
 
-
 #[derive(Derivative, Default)]
 #[derivative(Debug)]
 pub struct Registers {
@@ -992,10 +993,8 @@ pub struct Registers {
     #[derivative(Debug = "ignore")]
     nr41: Nr41,
     #[derivative(Debug = "ignore")]
-    dma: Dma
+    dma: Dma,
 }
-
-
 
 impl Registers {
     #[inline(always)]
@@ -1060,7 +1059,7 @@ impl Registers {
 
             LY_REG => self.ly,
 
-            P1_REG => self.p1.get(),
+            P1_REG => self.p1.read(),
 
             SCX_REG => self.scx,
 
@@ -1097,7 +1096,7 @@ impl Registers {
             }
 
             TAC_REG => {
-                self.tac.set(value);
+                self.tac.write(value);
             }
 
             BGP_REG => {
@@ -1105,15 +1104,15 @@ impl Registers {
             }
 
             OBP0_REG => {
-                self.ob_0.set(value);
+                self.ob_0.write(value);
             }
 
             OBP1_REG => {
-                self.ob_1.set(value);
+                self.ob_1.write(value);
             }
 
             LCDC_REG => {
-                self.lcdc.set(value);
+                self.lcdc.write(value);
             }
 
             LY_REG => {
@@ -1121,35 +1120,35 @@ impl Registers {
             }
 
             P1_REG => {
-                self.p1.set(value);
+                self.p1.write(value);
             }
 
             NR_52_REG => {
-                self.nr52.set(value);
+                self.nr52.write(value);
             }
 
             NR_11_REG => {
-                self.nr11.set(value);
+                self.nr11.write(value);
             }
 
             NR_51_REG => {
-                self.nr51.set(value);
+                self.nr51.write(value);
             }
 
             NR_50_REG => {
-                self.nr50.set(value);
+                self.nr50.write(value);
             }
 
             STAT_REG => {
-                self.stat.set(value);
+                self.stat.write(value);
             }
 
             NR_13_REG => {
-                self.nr13.set(value);
+                self.nr13.write(value);
             }
 
             NR_14_REG => {
-                self.nr14.set(value);
+                self.nr14.write(value);
             }
 
             SCY_REG => {
@@ -1164,10 +1163,7 @@ impl Registers {
                 self.lyc = value;
             }
 
-
-            NR_10_REG => {
-                self.nr10.set(value)
-            }
+            NR_10_REG => self.nr10.write(value),
 
             SC_REG | SB_REG => {
                 self.serial.write(address, value, &mut self.if_);
@@ -1182,15 +1178,15 @@ impl Registers {
             }
 
             NR_30_REG => {
-                self.nr30.set(value);
+                self.nr30.write(value);
             }
 
             NR_41_REG => {
-                self.nr41.set(value);
+                self.nr41.write(value);
             }
 
             DMA_REG => {
-                self.dma.set(value);
+                self.dma.write(value);
             }
 
             _ => {
@@ -1266,18 +1262,11 @@ struct Tima {
     pending_cycles: u32,
 }
 
-
 impl Tima {
-
     fn write(&mut self, value: u8) {
-
         self.value = value;
-
     }
-
 }
-
-
 
 /// When TIMA overflows, it is reset to the value in this register and an interrupt is requested.
 /// Example of use: if TMA is set to $FF, an interrupt is requested at the clock frequency selected
@@ -1300,7 +1289,7 @@ struct Joypad {
 }
 
 impl Joypad {
-    fn get(&self) -> u8 {
+    fn read(&self) -> u8 {
         (self.a_right as u8)
             + ((self.b_left as u8) << 1)
             + ((self.select_up as u8) << 2)
@@ -1309,7 +1298,7 @@ impl Joypad {
             + ((self.select_buttons as u8) << 5)
     }
 
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         self.a_right = is_nth_bit_set(value, 0);
         self.b_left = is_nth_bit_set(value, 1);
         self.select_up = is_nth_bit_set(value, 2);
@@ -1353,7 +1342,7 @@ struct ObPallet {
 }
 
 impl ObPallet {
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         self.id_1 = (is_nth_bit_set(value, 3), is_nth_bit_set(value, 2)).into();
         self.id_2 = (is_nth_bit_set(value, 5), is_nth_bit_set(value, 4)).into();
         self.id_3 = (is_nth_bit_set(value, 7), is_nth_bit_set(value, 6)).into();
@@ -1386,7 +1375,7 @@ impl Default for ClockSource {
 }
 
 impl TimerControl {
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         self.enable = is_nth_bit_set(value, 2);
 
         let clock_select = value & 0b_0000_0011;
@@ -1442,7 +1431,7 @@ pub struct LcdControl {
 }
 
 impl LcdControl {
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         self.bg_window_priority_enabled = is_nth_bit_set(value, 0);
         self.obj_enable = is_nth_bit_set(value, 1);
         self.obj_size = if is_nth_bit_set(value, 2) {
@@ -1495,7 +1484,7 @@ struct Nr52 {
 }
 
 impl Nr52 {
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         self.audio_on = is_nth_bit_set(value, 7);
         self.ch4_on = is_nth_bit_set(value, 3);
         self.ch3_on = is_nth_bit_set(value, 2);
@@ -1510,7 +1499,7 @@ impl Nr52 {
 struct Nr11 {}
 
 impl Nr11 {
-    fn set(&mut self, _value: u8) {
+    fn write(&mut self, _value: u8) {
         tracing::warn!("Nr11 not implemeted")
     }
 }
@@ -1529,7 +1518,7 @@ struct Nr51 {
 }
 
 impl Nr51 {
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         self.ch4_right = is_nth_bit_set(value, 7);
         self.ch3_right = is_nth_bit_set(value, 6);
         self.ch2_right = is_nth_bit_set(value, 5);
@@ -1567,7 +1556,7 @@ struct Nr50 {
 }
 
 impl Nr50 {
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         let right_speaker: u8 = (value >> 4) & 0x0F;
         self.right_speaker = right_speaker.into();
         self.right_vin = is_nth_bit_set(value, 3);
@@ -1607,7 +1596,7 @@ impl Stat {
     /// Bit 3 - Mode 0 (H-Blank) Interrupt Enable     (R/W)
     /// Bit 2 - LYC=LY Flag                           (Read-only)
     /// Bit 1-0 - Mode Flag (current PPU mode)        (Read-only)
-    fn set(&mut self, value: u8) {
+    fn write(&mut self, value: u8) {
         self.coincidence_ir_enable = is_nth_bit_set(value, 6);
         self.oam_ir_enable = is_nth_bit_set(value, 5);
         self.v_blank_ir_enable = is_nth_bit_set(value, 4);
@@ -1637,7 +1626,7 @@ pub enum StatMode {
 struct Nr13 {}
 
 impl Nr13 {
-    fn set(&mut self, _value: u8) {
+    fn write(&mut self, _value: u8) {
         tracing::warn!("Nr13 not implemented")
     }
 }
@@ -1648,7 +1637,7 @@ impl Nr13 {
 struct Nr14 {}
 
 impl Nr14 {
-    fn set(&mut self, _value: u8) {
+    fn write(&mut self, _value: u8) {
         tracing::warn!("Nr14 not implemented")
     }
 }
@@ -1658,42 +1647,89 @@ fn sign_extend_i8(x: u8) -> i16 {
     (x as i8) as i16
 }
 
-
 #[derive(Debug, Default)]
 struct Nr10 {}
 
 impl Nr10 {
-    fn set(&mut self, _value: u8) {
+    fn write(&mut self, _value: u8) {
         tracing::warn!("Nr10 not implemented")
     }
 }
-
 
 #[derive(Debug, Default)]
 struct Nr30 {}
 
 impl Nr30 {
-    fn set(&mut self, _value: u8) {
+    fn write(&mut self, _value: u8) {
         tracing::warn!("Nr30 not implemented")
     }
 }
-
 
 #[derive(Debug, Default)]
 struct Nr41 {}
 
 impl Nr41 {
-    fn set(&mut self, _value: u8) {
+    fn write(&mut self, _value: u8) {
         tracing::warn!("Nr30 not implemented")
     }
 }
-
 
 #[derive(Debug, Default)]
 struct Dma {}
 
 impl Dma {
-    fn set(&mut self, _value: u8) {
+    fn write(&mut self, _value: u8) {
         tracing::warn!("Dma not implemented")
+    }
+}
+
+
+/// While OAM DMA is active on DMG, the CPU can only access HRAM ($FF80–$FFFE).
+/// Code typically copies a tiny loop into HRAM, writes FF46, then busy-waits until DMA finishes.
+/// Also note the PPU can’t read OAM properly during the transfer; most games do OAM DMA in VBlank to avoid sprite glitches
+/// Quick checklist
+///     Trigger on write to FF46.
+///     Copy 160 bytes from (value<<8)|0x00 to $FE00.
+///     Duration: 160 M-cycles (640 T-cycles).
+///     DMG CPU access while active: HRAM only ($FF80–$FFFE).
+///     Read FF46: return last written value.
+///     Prefer to run DMA during VBlank to avoid sprite glitches.
+#[derive(Debug, Default)]
+struct OamDma {
+    active: bool,
+    src_high: u8,      // last written to FF46
+    idx: u16,          // 0..=159
+    timer_t: u32,      // T-cycles until next byte copy
+}
+
+
+impl OamDma {
+    fn write(&mut self, val: u8) {
+        self.src_high = val;
+        self.active = true;
+        self.idx = 0;
+        self.timer_t = 0; // first byte can be copied immediately after the write completes
+    }
+
+    fn tick(&mut self, tcycles: u32,
+    //        mem: &mut Bus
+    ) {
+        if !self.active { return; }
+        let src_base = (self.src_high as u16) << 8;
+
+        let mut t = tcycles + self.timer_t;
+        while self.active && t >= 4 {
+            t -= 4;
+            let src = src_base.wrapping_add(self.idx);
+            let dst = 0xFE00u16 + self.idx;
+            // FIXME
+            //let b = mem.read_dma_source(src);   // see access rules below
+            //mem.write_oam_dma(dst, b);          // write to OAM bypassing normal bus locks
+            self.idx += 1;
+            if self.idx == 160 {
+                self.active = false;
+            }
+        }
+        self.timer_t = t;
     }
 }

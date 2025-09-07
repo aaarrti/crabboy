@@ -66,8 +66,8 @@ impl Default for Registers {
             e: 0xD8,
             h: 0x01,
             l: 0x4D,
-            sp: 0x0100,
-            pc: 0xFFFE,
+            pc: 0x0100,
+            sp: 0xFFFE,
         }
     }
 }
@@ -225,28 +225,36 @@ impl Cpu {
     /// return number of CPU T-cycles the step consumed
     #[tracing::instrument(skip(memory))]
     pub fn step(&mut self, memory: &mut Memory) -> u8 {
-        if self.registers.pc == GAME_START {
-            tracing::info!("Reached game start!");
-        }
 
         let opcode = self.fetch_imm8(memory);
         match opcode {
-            // codegen-start
-            0x00 => 4,
+            0x00 => {
+                tracing::trace!("NOOP");
+                4
+            }
             0x01 => {
+                tracing::trace!("LD BC imm16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.set_bc(imm16);
                 12
             }
             0x02 => {
+                tracing::trace!("LD (BC) a");
                 memory.write(self.registers.bc(), self.registers.a);
                 8
             }
 
             0x04 => {
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
+                tracing::trace!("INC B");
                 (self.registers.b, self.flags) = inc(self.registers.b, &self.flags);
                 4
+            }
+
+            0x03 => {
+                tracing::trace!("INC BC");
+                self.registers.set_bc(self.registers.bc() + 1);
+                8
             }
 
             0x05 => {
@@ -296,15 +304,13 @@ impl Cpu {
             }
 
             0x09 => {
-                // ADD HL, BC
+                tracing::trace!("ADD HL");
                 self.registers
                     .set_hl(self.registers.hl() + self.registers.bc());
                 8
             }
 
             0x11 => {
-                // [{'name': 'DE', 'immediate': True}, {'name': 'n16', 'bytes': 2, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD DE, n16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.set_de(imm16);
@@ -312,38 +318,30 @@ impl Cpu {
             }
 
             0x13 => {
-                // [{'name': 'DE', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("INC DE");
                 self.registers.set_de(self.registers.de() + 1);
                 8
             }
 
             0x15 => {
-                // [{'name': 'D', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
                 tracing::trace!("DEC D");
                 (self.registers.d, self.flags) = dec(self.registers.d, &self.flags);
                 4
             }
             0x16 => {
-                // [{'name': 'D', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD D, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.d = imm8;
                 8
             }
             0x17 => {
-                // []
                 // {'Z': '0', 'N': '0', 'H': '0', 'C': 'C'}
                 tracing::trace!("RLA ");
                 (self.registers.a, self.flags) = rla(self.registers.a, &self.flags);
                 4
             }
             0x18 => {
-                // [{'name': 'e8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("JR e8");
                 let offset = self.fetch_imm8(memory);
                 self.registers.pc = jr(self.registers.pc, offset);
@@ -351,8 +349,6 @@ impl Cpu {
             }
 
             0x1A => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'DE', 'immediate': False}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, (DE)");
                 let a = memory.read(self.registers.de());
                 self.registers.a = a;
@@ -360,37 +356,30 @@ impl Cpu {
             }
 
             0x1C => {
-                // [{'name': 'E', 'immediate': True}]
                 // {'Z': 'Z', 'N': '0', 'H': 'H', 'C': '-'}
                 tracing::trace!("INC E");
                 (self.registers.e, self.flags) = inc(self.registers.e, &self.flags);
                 4
             }
             0x1D => {
-                // [{'name': 'E', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
                 tracing::trace!("DEC E");
                 (self.registers.e, self.flags) = dec(self.registers.e, &self.flags);
                 4
             }
             0x1E => {
-                // [{'name': 'E', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD E, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.e = imm8;
                 8
             }
             0x1F => {
-                // []
                 // {'Z': '0', 'N': '0', 'H': '0', 'C': 'C'}
                 tracing::trace!("RRA ");
                 (self.registers.a, self.flags) = rra(self.registers.a, self.flags.c);
                 4
             }
             0x20 => {
-                // [{'name': 'NZ', 'immediate': True}, {'name': 'e8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("JR NZ, e8");
                 let offset = self.fetch_imm8(memory);
 
@@ -402,24 +391,18 @@ impl Cpu {
                 }
             }
             0x21 => {
-                // [{'name': 'HL', 'immediate': True}, {'name': 'n16', 'bytes': 2, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD HL, n16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.set_hl(imm16);
                 12
             }
             0x22 => {
-                // [{'name': 'HL', 'increment': True, 'immediate': False}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD HL, A");
                 memory.write(self.registers.hl(), self.registers.a);
                 self.registers.set_hl(self.registers.hl() + 1);
                 8
             }
             0x23 => {
-                // [{'name': 'HL', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("INC HL");
                 self.registers.set_hl(self.registers.hl() + 1);
                 8
@@ -433,8 +416,6 @@ impl Cpu {
             }
 
             0x28 => {
-                // [{'name': 'Z', 'immediate': True}, {'name': 'e8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("JR Z, e8");
                 let offset = self.fetch_imm8(memory);
                 if self.flags.z {
@@ -446,16 +427,12 @@ impl Cpu {
             }
 
             0x2A => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'increment': True, 'immediate': False}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, (HL)+");
                 self.registers.a = memory.read(self.registers.hl());
                 self.registers.set_hl(self.registers.hl() + 1);
                 8
             }
             0x2B => {
-                // [{'name': 'HL', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("DEC HL");
                 self.registers.set_hl(self.registers.hl() - 1);
                 8
@@ -469,8 +446,6 @@ impl Cpu {
             }
 
             0x2E => {
-                // [{'name': 'L', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD L, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.l = imm8;
@@ -478,16 +453,12 @@ impl Cpu {
             }
 
             0x31 => {
-                // [{'name': 'SP', 'immediate': True}, {'name': 'n16', 'bytes': 2, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD SP, n16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.sp = imm16;
                 12
             }
             0x32 => {
-                // [{'name': 'HL', 'decrement': True, 'immediate': False}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD (HL)-, A");
                 memory.write(self.registers.hl(), self.registers.a);
                 self.registers.set_hl(self.registers.hl() - 1);
@@ -495,15 +466,12 @@ impl Cpu {
             }
 
             0x36 => {
-                // [{'name': 'HL', 'immediate': False}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD (HL), n8");
                 let imm8 = self.fetch_imm8(memory);
                 memory.write(self.registers.hl(), imm8);
                 12
             }
             0x37 => {
-                // []
                 // {'Z': '-', 'N': '0', 'H': '0', 'C': '1'}
                 tracing::trace!("SCF ");
                 self.flags.c = true;
@@ -520,8 +488,6 @@ impl Cpu {
                 4
             }
             0x3E => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'n8', 'bytes': 1, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, n8");
                 let imm8 = self.fetch_imm8(memory);
                 self.registers.a = imm8;
@@ -535,21 +501,17 @@ impl Cpu {
             }
 
             0x49 => {
-                // LD C, C
+                tracing::trace!("LD C, C");
                 4
             }
 
             0x4F => {
-                // [{'name': 'C', 'immediate': True}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD C, A");
                 self.registers.c = self.registers.a;
                 4
             }
 
             0x57 => {
-                // [{'name': 'D', 'immediate': True}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD D, A");
                 self.registers.d = self.registers.a;
                 4
@@ -562,59 +524,51 @@ impl Cpu {
             }
 
             0x67 => {
-                // [{'name': 'H', 'immediate': True}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD H, A");
                 self.registers.h = self.registers.a;
                 4
             }
 
+            0x73 => {
+                tracing::trace!("LD (HL), E");
+                memory.write(self.registers.hl(), self.registers.e);
+                8
+            }
+
             0x77 => {
-                // [{'name': 'HL', 'immediate': False}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD (HL), A");
                 memory.write(self.registers.hl(), self.registers.a);
                 8
             }
             0x78 => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'B', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, B");
                 self.registers.a = self.registers.b;
                 4
             }
 
             0x7B => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'E', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, E");
                 self.registers.a = self.registers.e;
                 4
             }
             0x7C => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'H', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, H");
                 self.registers.a = self.registers.h;
                 4
             }
             0x7D => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'L', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, L");
                 self.registers.a = self.registers.l;
                 4
             }
             0x7E => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'HL', 'immediate': False}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD A, (HL)");
                 self.registers.a = memory.read(self.registers.hl());
                 8
             }
 
             0x7F => {
-                // LD A, A
+                tracing::trace!("LD A, A");
                 4
             }
 
@@ -729,8 +683,6 @@ impl Cpu {
                 4
             }
             0xC0 => {
-                // [{'name': 'NZ', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("RET NZ");
                 if !self.flags.z {
                     let addr = self.pop_16stk(memory);
@@ -741,8 +693,6 @@ impl Cpu {
                 }
             }
             0xC1 => {
-                // [{'name': 'BC', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("POP BC");
                 let value = self.pop_16stk(memory);
                 self.registers.set_bc(value);
@@ -750,8 +700,6 @@ impl Cpu {
             }
 
             0xC3 => {
-                // [{'name': 'a16', 'bytes': 2, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("JP a16");
                 let imm16 = self.fetch_imm16(memory);
                 self.registers.pc = imm16;
@@ -759,24 +707,18 @@ impl Cpu {
             }
 
             0xC5 => {
-                // [{'name': 'BC', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PUSH BC");
                 self.push_16stk(self.registers.bc(), memory);
                 16
             }
 
             0xC9 => {
-                // []
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("RET ");
                 let ret_addr = self.pop_16stk(memory);
                 self.registers.pc = ret_addr;
                 16
             }
             0xCB => {
-                // []
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PREFIX");
                 let prefix_cycles = self.step_prefixed(memory);
                 4 + prefix_cycles
@@ -801,8 +743,6 @@ impl Cpu {
                 8
             }
             0xCD => {
-                // [{'name': 'a16', 'bytes': 2, 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("CALL a16");
                 let imm16 = self.fetch_imm16(memory);
                 let return_addr = self.registers.pc + 1;
@@ -812,8 +752,6 @@ impl Cpu {
             }
 
             0xD5 => {
-                // [{'name': 'DE', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PUSH DE");
                 self.push_16stk(self.registers.de(), memory);
                 16
@@ -825,8 +763,6 @@ impl Cpu {
             }
 
             0xE0 => {
-                // [{'name': 'a8', 'bytes': 1, 'immediate': False}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LDH a8, A");
                 let imm8 = self.fetch_imm8(memory);
                 memory.write(imm8.high_addr(), self.registers.a);
@@ -834,24 +770,18 @@ impl Cpu {
             }
 
             0xE2 => {
-                // [{'name': 'C', 'immediate': False}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LDH [C], A");
                 memory.write(self.registers.c.high_addr(), self.registers.a);
                 8
             }
 
             0xE5 => {
-                // [{'name': 'HL', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PUSH HL");
                 self.push_16stk(self.registers.hl(), memory);
                 16
             }
 
             0xEA => {
-                // [{'name': 'a16', 'bytes': 2, 'immediate': False}, {'name': 'A', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LD (a16), A");
                 let addr = self.fetch_imm16(memory);
                 memory.write(addr, self.registers.a);
@@ -859,8 +789,6 @@ impl Cpu {
             }
 
             0xF0 => {
-                // [{'name': 'A', 'immediate': True}, {'name': 'a8', 'bytes': 1, 'immediate': False}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("LDH A, a8");
                 //if self.registers.pc == 0x65 {
                 //    tracing::debug!("Waiting for screen frame LY = {:#x}", memory.registers.ly);
@@ -871,24 +799,18 @@ impl Cpu {
             }
 
             0xF3 => {
-                // []
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("DI");
                 self.ime = false;
                 4
             }
 
             0xF5 => {
-                // [{'name': 'AF', 'immediate': True}]
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("PUSH AF");
                 self.push_16stk(self.register_af(), memory);
                 16
             }
 
             0xFB => {
-                // []
-                // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
                 tracing::trace!("EI ");
                 self.ime = true;
                 4

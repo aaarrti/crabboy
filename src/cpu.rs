@@ -10,8 +10,6 @@ trait HighAddr {
 }
 
 impl HighAddr for u8 {
-
-
     fn high_addr(&self) -> u16 {
         (*self as u16) + HIGH_ADDRESS
     }
@@ -41,7 +39,6 @@ impl Debug for Cpu {
     }
 }
 
-#[derive(Default)]
 struct Registers {
     /// Accumulator
     a: u8,
@@ -57,8 +54,25 @@ struct Registers {
     pc: u16,
 }
 
-impl Registers {
+/// A = 0x01, B = 0x00, C = 0x13, D = 0x00, E = 0xD8, H = 0x01, L = 0x4D.
+/// PC = 0x0100, SP = 0xFFFE.
+impl Default for Registers {
+    fn default() -> Self {
+        Registers {
+            a: 0x01,
+            b: 0x00,
+            c: 0x13,
+            d: 0x00,
+            e: 0xD8,
+            h: 0x01,
+            l: 0x4D,
+            sp: 0x0100,
+            pc: 0xFFFE,
+        }
+    }
+}
 
+impl Registers {
     fn bc(&self) -> u16 {
         join_u16(self.c, self.b)
     }
@@ -84,7 +98,7 @@ impl Registers {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct Flags {
     /// This bit is set if and only if the result of an operation is zero. Used by conditional jumps.
     z: bool,
@@ -109,6 +123,18 @@ struct Flags {
     h: bool,
 }
 
+/// F (flags): most emulators use 0xB0 (Z=1, N=0, H=1, C=1). If you want to be exact: H/C are set iff the header checksum ≠ 0x00, otherwise both clear.
+impl Default for Flags {
+    fn default() -> Self {
+        Flags {
+            z: true,
+            n: false,
+            h: true,
+            c: true,
+        }
+    }
+}
+
 impl Debug for Flags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -126,7 +152,7 @@ impl Debug for Registers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "a={:#x},b={:#x},c={:#x},d={:#x},e={:#x},h={:#x},l={:#x},sp={:#04x},pc={:#04x}",
+            "a={:#x},b={:#x},c={:#x},d={:#x},e={:#x},h={:#x},l={:#x},sp={:#06x},pc={:#06x}",
             self.a, self.b, self.c, self.d, self.e, self.h, self.l, self.sp, self.pc
         )
     }
@@ -182,7 +208,7 @@ impl Cpu {
             tracing::debug!("serving interrupt {:?}", interrupt);
             memory.registers.acknowledge_interrupt(interrupt);
             self.push_16stk(self.registers.pc, memory);
-            self.registers.pc = interrupt.jump_addres();
+            self.registers.pc = interrupt.jump_address();
             self.ime = false;
         }
         5
@@ -222,6 +248,7 @@ impl Cpu {
                 (self.registers.b, self.flags) = inc(self.registers.b, &self.flags);
                 4
             }
+
             0x05 => {
                 // [{'name': 'B', 'immediate': True}]
                 // {'Z': 'Z', 'N': '1', 'H': 'H', 'C': '-'}
@@ -528,6 +555,12 @@ impl Cpu {
                 4
             }
 
+            0x66 => {
+                tracing::trace!("LD H, (HL)");
+                self.registers.h = memory.read(self.registers.hl());
+                8
+            }
+
             0x67 => {
                 // [{'name': 'H', 'immediate': True}, {'name': 'A', 'immediate': True}]
                 // {'Z': '-', 'N': '-', 'H': '-', 'C': '-'}
@@ -747,6 +780,25 @@ impl Cpu {
                 tracing::trace!("PREFIX");
                 let prefix_cycles = self.step_prefixed(memory);
                 4 + prefix_cycles
+            }
+            0xCC => {
+                tracing::trace!("CALL Z a16");
+                let imm16 = self.fetch_imm16(memory);
+                if self.flags.z {
+                    let return_addr = self.registers.pc + 1;
+                    self.push_16stk(return_addr, memory);
+                    self.registers.pc = imm16;
+                    24
+                } else {
+                    12
+                }
+            }
+            0xCE => {
+                // {"Z": "Z", "N": "0", "H": "H", "C": "C"}
+                tracing::trace!("ADC A, n8");
+                let imm8 = self.fetch_imm8(memory);
+                (self.registers.a, self.flags) = adc(self.registers.a, imm8);
+                8
             }
             0xCD => {
                 // [{'name': 'a16', 'bytes': 2, 'immediate': True}]

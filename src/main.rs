@@ -11,8 +11,9 @@ use memory::Memory;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
-
+use tracing_subscriber::{
+    layer::SubscriberExt, reload, util::SubscriberInitExt, EnvFilter, Layer, Registry,
+};
 
 use tracing_appender::non_blocking;
 use tracing_appender::{non_blocking::WorkerGuard, rolling};
@@ -30,8 +31,6 @@ struct CliArg {
     cartridge: PathBuf,
     #[arg(short, long, default_value_t = false)]
     debug: bool,
-    #[arg(short, long, default_value_t = false)]
-    test_rom: bool,
 }
 
 fn setup_tracing(debug: bool) -> Option<WorkerGuard> {
@@ -49,9 +48,9 @@ fn setup_tracing(debug: bool) -> Option<WorkerGuard> {
         let (nb_file, guard_file) = non_blocking(file_appender);
 
         let file_layer = tracing_subscriber::fmt::layer()
+            .json()
             .with_writer(nb_file)
             .compact()
-            .with_ansi(false)
             .with_line_number(true)
             .with_filter(EnvFilter::new("trace")); // everything
 
@@ -62,15 +61,10 @@ fn setup_tracing(debug: bool) -> Option<WorkerGuard> {
 
         Some(guard_file)
     } else {
-
-        tracing_subscriber::registry()
-            .with(stdout_layer)
-            .init();
-
+        tracing_subscriber::registry().with(stdout_layer).init();
         None
     }
 }
-
 
 fn install_sigint_handler() {
     // If you prefer not to use a static, capture an Arc<AtomicBool> instead.
@@ -84,7 +78,7 @@ fn install_sigint_handler() {
 fn main() {
     let cli_args = CliArg::try_parse().unwrap();
     let _guard = setup_tracing(cli_args.debug);
-    let mut memory = Memory::new(&cli_args.cartridge, cli_args.test_rom);
+    let mut memory = Memory::new(&cli_args.cartridge);
     let mut cpu = Cpu::default();
     let mut ppu = Ppu::new();
     install_sigint_handler();
@@ -96,8 +90,8 @@ fn main() {
         }
         //let start_time = Instant::now();
         let num_cycles = cpu.step(&mut memory);
-        memory.registers.inc_timer(num_cycles);
-
+        memory.registers.timer_tick(num_cycles);
+        memory.registers.serial_tick(num_cycles);
         ppu.tick(&mut memory.registers, num_cycles);
 
         //let elapsed = start_time.elapsed();
@@ -107,7 +101,9 @@ fn main() {
 
         if let Some(interrupt) = memory.registers.get_pending_interrupt() {
             let num_cycles = cpu.service_interrupt(&interrupt, &mut memory);
-            memory.registers.inc_timer(num_cycles);
+            memory.registers.timer_tick(num_cycles);
+            memory.registers.serial_tick(num_cycles);
+            ppu.tick(&mut memory.registers, num_cycles);
         }
         ppu.draw_frame(&memory);
     }

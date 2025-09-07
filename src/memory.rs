@@ -1,12 +1,11 @@
 use crate::cartridge::Cartridge;
 use crate::util::{is_nth_bit_set, set_nth_bit};
+use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use derivative::Derivative;
 use std::fmt::Debug;
 use std::path::PathBuf;
-use anyhow::{anyhow, Result};
-use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use anyhow::{Result, anyhow};
 
-const BOOT_ROM_END: usize = 0x00FF;
 const ROM_0_END: usize = 0x3FFF;
 
 const ROM_N_START: usize = 0x4000;
@@ -182,7 +181,7 @@ impl InterruptSource {
     /// Timer       Bit 2   0x0050
     /// Serial      Bit 3   0x0058
     /// Joypad      Bit 4   0x0060
-    pub fn jump_addres(&self) -> u16 {
+    pub fn jump_address(&self) -> u16 {
         match self {
             InterruptSource::VBlank => 0x0040,
             InterruptSource::Stat => 0x0048,
@@ -213,7 +212,6 @@ impl InterruptSource {
 /// FF80    FFFE    High RAM (HRAM)
 /// FFFF    FFFF    Interrupt Enable register (IE)
 pub struct Memory {
-    boot_rom: [u8; BOOT_ROM_END + 1],
     rom_0: [u8; ROM_0_END + 1],
     // rom_n: Option<[u8; ROM_N_END - ROM_N_START + 1]>,
     vram: Vram,
@@ -223,48 +221,13 @@ pub struct Memory {
     wram: Wram,
     hram: Hram,
     //pub cartridge: Cartridge,
-    boot_rom_mapped: bool,
     io_: IoMem,
     oam: ObjectAttributeMemory,
-    rom_size: usize
+    rom_size: usize,
 }
 
 impl Memory {
-
-    fn from_test_rom(path: &PathBuf) -> Self {
-        let data: Vec<u8> = std::fs::read(path).unwrap();
-
-        let mut rom_0 = [0; ROM_0_END + 1];
-        let vram = Vram::new();
-        let wram = Wram::new();
-        let io_ = IoMem::default();
-
-        // mmap first 16KB
-        rom_0.copy_from_slice(&data[0..=ROM_0_END]);
-        // rom_n.copy_from_slice(&cartridge[ROM_N_START..ROM_N_END + 1]);
-
-        let hram = Hram::new();
-        let registers = Registers::default();
-
-
-        let boot_rom_ = [0; BOOT_ROM_END + 1];
-
-        Memory {
-            boot_rom: boot_rom_,
-            rom_0,
-            vram,
-            wram,
-            hram,
-            registers,
-            rom_size: data.len(),
-            io_,
-            boot_rom_mapped: false,
-            oam: ObjectAttributeMemory::default(),
-        }
-    }
-
-    fn from_cartridge(path: &PathBuf) -> Self {
-        let boot_rom: Vec<u8> = std::fs::read("data/boot.gb").unwrap();
+    pub fn new(path: &PathBuf) -> Self {
         let cartridge = Cartridge::new(path);
 
         let mut rom_0 = [0; ROM_0_END + 1];
@@ -280,12 +243,7 @@ impl Memory {
         let hram = Hram::new();
         let registers = Registers::default();
 
-        let data = boot_rom.as_slice();
-        let mut boot_rom_ = [0; BOOT_ROM_END + 1];
-        boot_rom_.copy_from_slice(&data[0..=BOOT_ROM_END]);
-
-        Memory {
-            boot_rom: boot_rom_,
+        let mut memory = Memory {
             rom_0,
             vram,
             wram,
@@ -293,172 +251,170 @@ impl Memory {
             registers,
             //cartridge,
             io_,
-            boot_rom_mapped: true,
             oam: ObjectAttributeMemory::default(),
-            rom_size: cartridge.header.rom_size
-        }
+            rom_size: cartridge.header.rom_size,
+        };
+        tracing::info!("Initializing memory");
+        // Use these DMG/MGB post-boot values recorded at PC=$0100:
+        // FF00 P1/JOYP = 0xCF
+        // FF01 SB       = 0x00
+        // FF02 SC       = 0x7E
+        // FF04 DIV      = 0xAB   ; timing-dependent; see note below
+        // FF05 TIMA     = 0x00
+        // FF06 TMA      = 0x00
+        // FF07 TAC      = 0xF8
+        // FF0F IF       = 0xE1
+        // ; APU
+        // FF10 NR10 = 0x80   FF11 NR11 = 0xBF   FF12 NR12 = 0xF3
+        // FF13 NR13 = 0xFF   FF14 NR14 = 0xBF
+        // FF16 NR21 = 0x3F   FF17 NR22 = 0x00   FF18 NR23 = 0xFF   FF19 NR24 = 0xBF
+        // FF1A NR30 = 0x7F   FF1B NR31 = 0xFF   FF1C NR32 = 0x9F   FF1D NR33 = 0xFF   FF1E NR34 = 0xBF
+        // FF20 NR41 = 0xFF   FF21 NR42 = 0x00   FF22 NR43 = 0x00   FF23 NR44 = 0xBF
+        // FF24 NR50 = 0x77   FF25 NR51 = 0xF3   FF26 NR52 = 0xF1
+        // ; PPU
+        // FF40 LCDC = 0x91   FF41 STAT = 0x85
+        // FF42 SCY  = 0x00   FF43 SCX  = 0x00
+        // FF44 LY   = 0x00   FF45 LYC  = 0x00
+        // FF46 DMA  = 0xFF
+        // FF47 BGP  = 0xFC
+        // FF48 OBP0 = (undefined)   FF49 OBP1 = (undefined)  ; usually 00 or FF on power-up
+        // FF4A WY   = 0x00   FF4B WX   = 0x00
+        // FFFF IE   = 0x00
 
+        memory.write(P1_REG as u16, 0xCF);
+        memory.write(SB_REG as u16, 0x00);
+        memory.write(SC_REG as u16, 0x00);
+        memory.write(DIV_REG as u16, 0xAB);
+        memory.write(TIMA_REG as u16, 0x00);
+        memory.write(TMA_REG as u16, 0x00);
+        memory.write(TAC_REG as u16, 0xF8);
+        memory.write(IF_REG as u16, 0xE1);
+        // APU
+        memory.write(NR_10_REG as u16, 0x80);
+        memory.write(NR_13_REG as u16, 0xFF);
+        memory.write(NR_30_REG as u16, 0x7F);
+        memory.write(NR_41_REG as u16, 0xFF);
+        memory.write(NR_50_REG as u16, 0x77);
+        //
+        memory.write(LCDC_REG as u16, 0x91);
+        memory.write(SCY_REG as u16, 0x00);
+
+        //memory.write(LY_REG as u16, 0x00);
+        memory.write(DMA_REG as u16, 0xFF);
+        memory.write(BGP_REG as u16, 0xFC);
+        memory.write(OBP0_REG as u16, 0x00);
+        memory.write(OBP1_REG as u16, 0x00);
+        memory.write(IE_REG as u16, 0x00);
+
+        tracing::info!("Memory initialized");
+        memory
     }
 
 
-    pub fn new(path: &PathBuf, test_rom: bool) -> Self {
-        if test_rom {
-            Memory::from_test_rom(path)
-        } else {
-            Memory::from_cartridge(path)
-        }
-    }
 
     pub fn read(&self, address: u16) -> u8 {
         let address = address as usize;
 
-        if self.boot_rom_mapped && address <= BOOT_ROM_END {
-            return self.boot_rom[address];
-        }
-        if Registers::matches(address) {
-            // tracing::debug!("Read from hardware register at: {:#04x}", address);
-            return self.registers.read(address);
-        }
+        match address {
+            0..=ROM_0_END => self.rom_0[address],
 
-        if address <= ROM_0_END {
-            let limit = self.rom_size;
-            if address >= limit {
-                panic!(
-                    "Address {:#x} out of bounds for ROM size {:#x}",
-                    address, limit
-                );
+            P1_REG..=NR_52_REG | LCDC_REG..=WX_REG | IE_REG => self.registers.read(address),
+
+            ROM_N_START..=ROM_N_END => {
+                // let address = address - ROM_N_START;
+                // return Ok(self.rom_n[address]);
+                panic!("ROM n not implemeted")
             }
-            return self.rom_0[address];
+            VRAM_START..=VRAM_END => self.vram.0[address - VRAM_START],
+
+            WRAM_START..=WRAM_END => self.wram.read(address),
+
+            EX_RAM_START..=EX_RAM_END => {
+                panic!("EX RAM no implemeted");
+            }
+
+            ECHO_RAM_START..=ECHO_RAM_END => {
+                // 0xE74D is in Echo RAM (E000–FDFF).
+                // It’s just a mirror of WRAM at the same address minus 0x2000.
+                self.wram.read(address - ECHO_RAM_START + WRAM_START)
+            }
+
+            OAM_START..=OAM_END => {
+                panic!("OAM read not implemted")
+            }
+            NOT_USABLE_START..=NOT_USABLE_END => {
+                panic!("Illegal read to NOT USABLE at {:#04x}", address)
+            }
+
+            IO_START..=IO_END => self.io_.read(address),
+
+            HRAM_START..=HRAM_END => self.hram.read(address),
+
+            _ => {
+                panic!("Illegal address = {:#04x}", address)
+            }
         }
-
-        if (ROM_N_START..=ROM_N_END).contains(&address) {
-            // let address = address - ROM_N_START;
-            // return Ok(self.rom_n[address]);
-            panic!("ROM n not implemeted")
-        }
-
-        if Vram::matches(address) {
-            return self.vram.read(address);
-        };
-
-        if (EX_RAM_START..=EX_RAM_END).contains(&address) {
-            panic!("EX RAM no implemeted");
-        }
-
-        if Wram::matches(address) {
-            return self.wram.read(address);
-        }
-
-        if (ECHO_RAM_START..=ECHO_RAM_END).contains(&address) {
-            panic!("Illegal read to ECHO RAM at {:#04x}", address)
-        }
-
-        if (OAM_START..=OAM_END).contains(&address) {
-            panic!("OAM read not implemted")
-        }
-
-        if (NOT_USABLE_START..=NOT_USABLE_END).contains(&address) {
-            panic!("Illegal read to NOT USABLE at {:#04x}", address)
-        }
-
-        if IoMem::matches(address) {
-            return self.io_.read(address);
-        }
-
-        if Hram::matches(address) {
-            return self.hram.read(address);
-        }
-
-        panic!("Illegal address = {:#04x}", address);
     }
 
     //#[tracing::instrument(skip(self), err)]
     pub fn write(&mut self, address: u16, value: u8) {
         let address = address as usize;
 
-        if address == BOOT_ROM_DISABLE_REG {
-            // if self.boot_rom_mapped {
-            if self.boot_rom_mapped && value != 0x0 {
-                tracing::info!("Boot ROM done executing!");
-                self.boot_rom_mapped = false;
-                return;
+        match address {
+            BOOT_ROM_DISABLE_REG => {}
+
+            BANK_SELECT_REGISTER => {
+                // those writes are handled by MBC on cartridge
+                // rom only cartridge - no bank switch, just ignore
+            }
+
+            P1_REG..=NR_52_REG | LCDC_REG..=WX_REG | IE_REG => {
+                self.registers.write(address, value);
+            }
+
+            0..=ROM_0_END => {
+                panic!("Illegal rite to ROM bank 0 at {:#04x}", address)
+            }
+
+            ROM_N_START..=ROM_N_END => {
+                panic!("Illegal write to ROM bank n at {:#04x}", address)
+            }
+
+            EX_RAM_START..=EX_RAM_END => {
+                panic!("EX RAM no implemeted");
+            }
+
+            VRAM_START..=VRAM_END => {
+                self.vram.write(address, value);
+            }
+            ECHO_RAM_START..=ECHO_RAM_END => {
+                self.wram.0[address - ECHO_RAM_START] = value;
+            }
+
+            OAM_START..=OAM_END => {
+                match &self.registers.stat.mode {
+                    StatMode::Hblank | StatMode::Vblank => self.oam.write(address, value),
+
+                    mode => {
+                        tracing::warn!("Blocking OAM write during mode = {:?}", mode);
+                    }
+                };
+            }
+
+            NOT_USABLE_START..=NOT_USABLE_END => {}
+
+            IO_START..=IO_END => {
+                self.io_.write(address, value);
+            }
+
+            HRAM_START..=HRAM_END => {
+                self.hram.write(address, value);
+            }
+
+            _ => {
+                panic!("Illegal address = {:#04x}", address)
             }
         }
-        if address <= BOOT_ROM_END {
-            panic!("Illegal write to boot ROM at {:#04x}", address);
-        }
-        // }
-        if Registers::matches(address) {
-            // tracing::debug!("Write hardware register at: {:#04x}", address);
-            return self.registers.write(address, value);
-        }
-
-        if address == BANK_SELECT_REGISTER {
-            // thos writes are handled by MBC on cartridge
-            // rom only cartridge - no bank switch, just ignore
-            return;
-        }
-
-        if address == IE_REG {
-            panic!("IE REG write not implemented");
-        }
-
-        if address <= ROM_0_END {
-            panic!("Illegal rite to ROM bank 0 at {:#04x}", address)
-        }
-
-        if (ROM_N_START..=ROM_N_END).contains(&address) {
-            panic!("Illegal write to ROM bank n at {:#04x}", address)
-        }
-
-        if Vram::matches(address) {
-            self.vram.write(address, value);
-            return;
-        }
-
-        if (EX_RAM_START..=EX_RAM_END).contains(&address) {
-            // let address = address - WRAM_START;
-            // self.ex_ram[address] = value;
-            // return Ok(());
-            panic!("EX RAM no implemeted");
-        }
-
-        if Wram::matches(address) {
-            self.wram.write(address, value);
-            return;
-        }
-
-        if (ECHO_RAM_START..=ECHO_RAM_END).contains(&address) {
-            panic!("Illegal access to ECHO RAM at {:#04x}", address)
-        }
-
-        if (OAM_START..=OAM_END).contains(&address) {
-            // CPU access is blocked during Mode 2 & 3 (OAM search and drawing), but allowed in HBlank & VBlank.
-
-            return match &self.registers.stat.mode {
-                StatMode::Hblank | StatMode::Vblank => self.oam.write(address, value),
-
-                mode => {
-                    tracing::warn!("Blocking OAM write during mode = {:?}", mode);
-                }
-            };
-        }
-
-        if (NOT_USABLE_START..=NOT_USABLE_END).contains(&address) {
-            //tracing::warn!("Illegal write to NOT USABLE at {:#04x}", address);
-            return;
-        }
-
-        if IoMem::matches(address) {
-            return self.io_.write(address, value);
-        }
-
-        if Hram::matches(address) {
-            self.hram.write(address, value);
-            return;
-        }
-
-        panic!("Illegal address = {:#04x}", address)
     }
 
     fn tile_data_base_and_index(&self, tile_index: u8) -> u16 {
@@ -517,7 +473,7 @@ impl Memory {
     /// frame[144][160]         # store DMG shade 0..3 (or expand to RGBA after)
     pub fn decode_framebuffer(&self) -> Vec<u8> {
         const WIDTH: usize = DISPLAY_WIDTH as usize;
-        const  HEIGHT: usize = DISPLAY_HEIGHT as usize;
+        const HEIGHT: usize = DISPLAY_HEIGHT as usize;
         let mut frame: [[u8; WIDTH]; HEIGHT] = [[0; WIDTH]; HEIGHT];
         let mut frame_meta_coloridx: [[u8; WIDTH]; HEIGHT] = [[0; WIDTH]; HEIGHT];
 
@@ -533,7 +489,7 @@ impl Memory {
                     color_idx = 0;
                 } else {
                     let bx = self.registers.scx + x as u8;
-                    let by = self.registers.scy + ly as u8;
+                    let by = self.registers.scy.wrapping_add(ly as u8);
                     let tile_x = bx >> 3;
                     let tile_y = by >> 3;
                     let row_in_tile = by & 7;
@@ -605,8 +561,8 @@ impl Memory {
                     if sx_on_screen >= WIDTH as u8 {
                         continue;
                     }
-                    //let attr = self.oam.sprites[i as usize].attr;
-                    //let tile = self.oam.sprites[i as usize].tile;
+                    let attr = self.oam.sprites[i as usize].attr;
+                    let tile = self.oam.sprites[i as usize].tile;
                     // 8x16: tile index points to pair; select top/bottom half
                 }
 
@@ -707,13 +663,109 @@ impl Memory {
 ///   0x9C00   0x9FFF   BG Map 1 (Tile Map 1) .      Alternate background tile map
 struct Vram([u8; VRAM_END - VRAM_START + 1]);
 
+#[derive(Default)]
+struct Serial {
+    sb: u8, // FF01
+    sc: u8, // FF02 (only bits 7 and 0 meaningful; others read as 1)
+    active: bool,
+    timer: u32, // T-cycles remaining
+    last_tx: u8,
+    log_enabled: bool,
+    line_buf: String,
+}
+
+impl Serial {
+    fn read(&self, addr: usize) -> u8 {
+        match addr {
+            SB_REG => self.sb,
+            SC_REG => {
+                let mut v = (self.sc & 0x81) | 0x7E;
+                if self.active {
+                    v |= 0x01;
+                } else {
+                    v &= !0x01;
+                }
+                v
+            }
+            _ => 0xFF,
+        }
+    }
+
+    fn write(&mut self, addr: usize, val: u8, _if_reg: &mut u8) {
+        match addr {
+            SB_REG => {
+                if !self.active {
+                    self.sb = val;
+                }
+                // (writes during active usually have no effect)
+            }
+            SC_REG => {
+                // store only the meaningful bits, make others read as 1
+                self.sc = (val & 0x81) | 0x7E;
+
+                let start = (val & 0x01) != 0;
+                // let internal = (val & 0x80) != 0;
+
+                if start {
+                    //if internal {
+                    // one byte @ 8 kHz -> 8 bits -> 4096 T-cycles on DMG
+                    self.active = true;
+                    self.timer = 4096; // ~1 ms @ DMG
+                    self.last_tx = self.sb; // capture TX at start
+                                            //} else {
+                                            // external clock: with no peer, never progresses
+                    self.active = true;
+                    self.timer = u32::MAX; // or some sentinel
+                                           //}
+                }
+            }
+            _ => {
+                panic!("invalid address for serial {:#x}", addr)
+            }
+        }
+    }
+
+    // call this as your CPU advances time (in T-cycles)
+    fn tick(&mut self, tcycles: u8, if_reg: &mut u8) {
+        let tcycles = tcycles as u32;
+        if !self.active {
+            return;
+        }
+
+        if (self.sc & 0x80) == 0 {
+            // external clock: do nothing (no peer)
+            return;
+        }
+
+        if self.timer > tcycles {
+            self.timer -= tcycles;
+        } else {
+            // complete
+            self.active = false;
+            self.timer = 0;
+            self.sc &= !0x01; // clear start bit
+            self.sb = 0xFF; // received byte (no peer)
+            *if_reg |= 0x08; // IF.serial
+
+            //if self.log_enabled {
+            let ch = self.last_tx as char;
+            if ch == '\n' || ch == '\r' {
+                eprintln!("[SER] {}", self.line_buf);
+                self.line_buf.clear();
+            } else if self.last_tx.is_ascii_graphic() || ch == ' ' {
+                self.line_buf.push(ch);
+            } else {
+                use std::fmt::Write;
+                let _ = write!(self.line_buf, "\\x{:02X}", self.last_tx);
+            }
+            // }
+        }
+    }
+}
+
 impl Vram {
     fn new() -> Self {
         Self([0; VRAM_END - VRAM_START + 1])
-    }
-
-    fn matches(address: usize) -> bool {
-        (VRAM_START..=VRAM_END).contains(&address)
     }
 
     fn read(&self, address: usize) -> u8 {
@@ -797,10 +849,6 @@ impl Hram {
         Self([0; HRAM_END - HRAM_START + 1])
     }
 
-    fn matches(address: usize) -> bool {
-        (HRAM_START..=HRAM_END).contains(&address)
-    }
-
     fn read(&self, address: usize) -> u8 {
         let address = address - HRAM_START;
         self.0[address]
@@ -838,37 +886,28 @@ impl Wram {
 struct IoMem {}
 
 impl IoMem {
-    fn matches(address: usize) -> bool {
-        (IO_START..=IO_END).contains(&address)
-    }
-
-    fn is_unmapped(address: usize) -> bool {
-        (0xFF4C..=0xFF4F).contains(&address) ||
-        (0xFF5A..=0xFF5F).contains(&address) ||
-        (0xFF78..=0xFF7F).contains(&address) ||
-        (0xFF72..=0xFF75).contains(&address) ||
-        (0xFF56..=0xFF57).contains(&address) ||
-        // GCB only VRAM DMA
-        (0xFF51..=0xFF55).contains(&address) ||
-        (0xFF60..=0xFF6F).contains(&address) ||
-        // GCB only
-        (0xFF58..=0xFF59).contains(&address) ||
-        // those are only for GCB, we dont do it
-        [0xFF77, 0xFF76, 0xFF71, 0xFF70].contains(&address)
-    }
-
     fn read(&self, address: usize) -> u8 {
         panic!("Not implemented IO read at: {:#04x}", address)
     }
 
     fn write(&mut self, address: usize, _value: u8) {
-        if IoMem::is_unmapped(address) {
-            // not documented,so NOOP
-            //tracing::warn!("Write to undocumented IO at: {:#04x}", address);
-            return;
-        }
+        match address {
+            // unused IO
+            0xFF4C..=0xFF4F | 0xFF5A..=0xFF5F | 0xFF78..=0xFF7F | 0xFF72..=0xFF75 | 0xFF56..=0xFF57
+            // GCB only VRAM DMA
+            | 0xFF51..=0xFF55 | 0xFF60..=0xFF6F
+            // GCB only
+            | 0xFF58..=0xFF59
+            // those are only for GCB, we dont do it
+            | 0xFF77 | 0xFF76 | 0xFF71 | 0xFF70 => {
 
-        panic!("Not implemented IO write at: {:#04x}", address)
+            }
+
+            _ => {
+                panic!("Not implemented IO write at: {:#04x}", address)
+            }
+
+        }
     }
 }
 
@@ -878,6 +917,7 @@ const TIMER_IR_BIT: usize = 2;
 const SERIAL_IR_BIT: usize = 3;
 
 const JOYPAD_IR_BIT: usize = 4;
+
 
 #[derive(Derivative, Default)]
 #[derivative(Debug)]
@@ -900,8 +940,6 @@ pub struct Registers {
     // the visible 160×144 pixel area within the 256×256 pixels BG map. Values in the range 0–255 may be used.
     scx: u8,
     scy: u8,
-    #[derivative(Debug = "ignore")]
-    sc: SerialControl,
     // These two registers specify the on-screen coordinates of the Window’s top-left pixel.
     wy: u8,
     wx: u8,
@@ -945,24 +983,21 @@ pub struct Registers {
     #[derivative(Debug = "ignore")]
     nr14: Nr14,
     lyc: u8,
+    #[derivative(Debug = "ignore")]
+    serial: Serial,
+    #[derivative(Debug = "ignore")]
+    nr10: Nr10,
+    #[derivative(Debug = "ignore")]
+    nr30: Nr30,
+    #[derivative(Debug = "ignore")]
+    nr41: Nr41,
+    #[derivative(Debug = "ignore")]
+    dma: Dma
 }
 
+
+
 impl Registers {
-    fn matches(address: usize) -> bool {
-        (P1_REG..=NR_52_REG).contains(&address)
-            || (LCDC_REG..=WX_REG).contains(&address)
-            || address == IE_REG
-
-        //[
-        //    P1_REG, SB_REG, SC_REG, DIV_REG, TIMA_REG, TMA_REG, TAC_REG, IF_REG, NR_10_REG,
-        //    NR_11_REG, NR_12_REG, NR_13_REG, NR_14_REG, NR_21_REG, NR_22_REG, NR_23_REG, NR_24_REG,
-        //    NR_30_REG, NR_31_REG, NR_32_REG, NR_33_REG, NR_34_REG, NR_41_REG, NR_42_REG, NR_43_REG,
-        //    NR_44_REG, NR_50_REG, NR_51_REG, NR_52_REG, LCDC_REG, STAT_REG, SCY_REG, SCX_REG,
-        //    LY_REG, LYC_REG, DMA_REG, BGP_REG, OBP0_REG, OBP1_REG, WY_REG, WX_REG, IE_REG,
-        // ]
-        // .contains(&address)
-    }
-
     #[inline(always)]
     pub fn get_pending_interrupt(&self) -> Option<InterruptSource> {
         // If IME and IE allow the servicing of more than one of the requested interrupts,
@@ -990,7 +1025,7 @@ impl Registers {
         Some(src)
     }
 
-    pub fn inc_timer(&mut self, n_cycles: u8) {
+    pub fn timer_tick(&mut self, n_cycles: u8) {
         if !self.tac.enable {
             return;
         }
@@ -1001,11 +1036,12 @@ impl Registers {
             return;
         }
 
-        self.tima.value += 1;
+        let (value, overlow) = self.tima.value.overflowing_add(1);
+        self.tima.value = value;
         self.tima.pending_cycles -= self.tac.clock_select.increment_every;
 
-        if self.tima.value > 0xFF {
-            self.tima.value = self.tma.0 as u32;
+        if overlow {
+            self.tima.value = self.tma.0;
             self.request_interrupt(&InterruptSource::Timer);
         }
     }
@@ -1018,7 +1054,7 @@ impl Registers {
     }
 
     fn read(&self, address: usize) -> u8 {
-        let value = match address {
+        match address {
             IF_REG => self.if_,
             IE_REG => self.ie,
 
@@ -1030,12 +1066,12 @@ impl Registers {
 
             SCY_REG => self.scy,
 
+            SB_REG | SC_REG => self.serial.read(address),
+
             _ => {
                 panic!("Not implemented read: {:#x}", address)
             }
-        };
-
-        value
+        }
     }
 
     fn write(&mut self, address: usize, value: u8) {
@@ -1046,14 +1082,6 @@ impl Registers {
 
             IE_REG => {
                 self.ie = value;
-            }
-
-            SB_REG => {
-                // tracing::debug!("Serial send: {:?}", value as char);
-            }
-
-            SC_REG => {
-                self.sc.set(value);
             }
 
             WX_REG => {
@@ -1136,6 +1164,35 @@ impl Registers {
                 self.lyc = value;
             }
 
+
+            NR_10_REG => {
+                self.nr10.set(value)
+            }
+
+            SC_REG | SB_REG => {
+                self.serial.write(address, value, &mut self.if_);
+            }
+
+            DIV_REG => {
+                tracing::warn!("DIV register not implemented");
+            }
+
+            TIMA_REG => {
+                self.tima.write(value);
+            }
+
+            NR_30_REG => {
+                self.nr30.set(value);
+            }
+
+            NR_41_REG => {
+                self.nr41.set(value);
+            }
+
+            DMA_REG => {
+                self.dma.set(value);
+            }
+
             _ => {
                 panic!("Not implemented write: {:#x}", address)
             }
@@ -1194,6 +1251,10 @@ impl Registers {
     fn map_palette_dmg(&self, idx: u8) -> u8 {
         (self.bgp >> (idx * 2)) & 0b11
     }
+
+    pub fn serial_tick(&mut self, num_cycles: u8) {
+        self.serial.tick(num_cycles, &mut self.if_);
+    }
 }
 
 /// This timer is incremented at the clock frequency specified by the TAC register ($FF07).
@@ -1201,9 +1262,22 @@ impl Registers {
 /// specified in TMA (FF06) and an interrupt is requested, as described below.
 #[derive(Debug, Default)]
 struct Tima {
-    value: u32,
+    value: u8,
     pending_cycles: u32,
 }
+
+
+impl Tima {
+
+    fn write(&mut self, value: u8) {
+
+        self.value = value;
+
+    }
+
+}
+
+
 
 /// When TIMA overflows, it is reset to the value in this register and an interrupt is requested.
 /// Example of use: if TMA is set to $FF, an interrupt is requested at the clock frequency selected
@@ -1410,28 +1484,6 @@ enum ObjSize {
     Size8x16,
 }
 
-#[derive(Default, Debug)]
-struct SerialControl {
-    enable: bool,
-    // If set to 1, enable high speed serial clock (~256 kHz in single-speed mode)
-    high_speed_clock: bool,
-    // 0 = External clock (“slave”), 1 = Internal clock (“master”)
-    clock_select: bool,
-}
-
-impl SerialControl {
-    fn set(&mut self, value: u8) {
-        self.enable = is_nth_bit_set(value, 0);
-
-        if self.enable {
-            tracing::warn!("Serial not implemented");
-        }
-
-        self.high_speed_clock = is_nth_bit_set(value, 1);
-        self.clock_select = is_nth_bit_set(value, 2);
-    }
-}
-
 /// NR52: Audio master control
 #[derive(Debug, Default)]
 struct Nr52 {
@@ -1604,4 +1656,44 @@ impl Nr14 {
 #[inline(always)]
 fn sign_extend_i8(x: u8) -> i16 {
     (x as i8) as i16
+}
+
+
+#[derive(Debug, Default)]
+struct Nr10 {}
+
+impl Nr10 {
+    fn set(&mut self, _value: u8) {
+        tracing::warn!("Nr10 not implemented")
+    }
+}
+
+
+#[derive(Debug, Default)]
+struct Nr30 {}
+
+impl Nr30 {
+    fn set(&mut self, _value: u8) {
+        tracing::warn!("Nr30 not implemented")
+    }
+}
+
+
+#[derive(Debug, Default)]
+struct Nr41 {}
+
+impl Nr41 {
+    fn set(&mut self, _value: u8) {
+        tracing::warn!("Nr30 not implemented")
+    }
+}
+
+
+#[derive(Debug, Default)]
+struct Dma {}
+
+impl Dma {
+    fn set(&mut self, _value: u8) {
+        tracing::warn!("Dma not implemented")
+    }
 }

@@ -90,7 +90,8 @@ impl Ppu {
         let indices = NoIndices(glium::index::PrimitiveType::TriangleStrip);
 
         // ----- Create texture once -----
-        let empty = vec![0u8; (DISPLAY_WIDTH * DISPLAY_HEIGHT * 4 * SCALE_FACTOR * SCALE_FACTOR) as usize];
+        let empty =
+            vec![0u8; (DISPLAY_WIDTH * DISPLAY_HEIGHT * 4 * SCALE_FACTOR * SCALE_FACTOR) as usize];
         let tex = {
             let raw = glium::texture::RawImage2d::from_raw_rgba_reversed(
                 &empty,
@@ -122,7 +123,7 @@ impl Ppu {
 
         // Work in u16 for arithmetic headroom
         let mut dot = self.dot_counter;
-        let mut ly  = registers.ly as u16;
+        let mut ly = registers.ly as u16;
         let mut t = n_cycles;
 
         while t != 0 {
@@ -209,7 +210,6 @@ impl Ppu {
             return;
         }
 
-
         let fb = memory.decode_framebuffer();
         let fb = expand_gray_to_rgba_scaled(fb.as_slice());
 
@@ -235,7 +235,15 @@ impl Ppu {
             fb: self.texture.sampled().magnify_filter(glium::uniforms::MagnifySamplerFilter::Nearest)
                            .minify_filter(glium::uniforms::MinifySamplerFilter::Nearest),
         };
-        frame.draw(&self.vbo, self.indices, &self.program, &uniforms, &Default::default()).unwrap();
+        frame
+            .draw(
+                &self.vbo,
+                self.indices,
+                &self.program,
+                &uniforms,
+                &Default::default(),
+            )
+            .unwrap();
         frame.finish().unwrap();
         self.frame_ready = false;
     }

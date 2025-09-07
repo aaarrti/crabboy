@@ -2,7 +2,6 @@ use crate::memory::{InterruptSource, Memory, StatMode};
 use crate::{memory, DISPLAY_HEIGHT, DISPLAY_WIDTH, SCALE_FACTOR};
 use glium::glutin::surface::WindowSurface;
 use glium::index::NoIndices;
-use glium::winit::platform::x11::EventLoopBuilderExtX11;
 use glium::winit::window::Window;
 use glium::{implement_vertex, uniform, winit, Display, Program, Surface, Texture2d, VertexBuffer};
 
@@ -54,12 +53,9 @@ pub struct Ppu {
 impl Ppu {
     pub fn new() -> Self {
         // 1. The **winit::EventLoop** for handling events.
-        let event_loop = winit::event_loop::EventLoop::builder()
-            .with_x11()
-            .build()
-            .unwrap();
+        let event_loop = winit::event_loop::EventLoop::builder().build().unwrap();
 
-        // real GB screnn is 160×144, linearly scale it up
+        // real GB screen is 160×144, linearly scale it up
         // 2. Create a glutin context and glium Display
         let (_window, display) = glium::backend::glutin::SimpleWindowBuilder::new()
             .with_inner_size(DISPLAY_WIDTH * SCALE_FACTOR, DISPLAY_HEIGHT * SCALE_FACTOR)
@@ -154,11 +150,10 @@ impl Ppu {
                 // if mode == StatMode::Vblank    && registers.stat.v_blank_ir_enable { registers.request_interrupt(&InterruptSource::Stat); }
                 // if mode == StatMode::Hblank    && registers.stat.h_blank_ir_enable { registers.request_interrupt(&InterruptSource::Stat); }
 
-                if mode == StatMode::OamSearch && registers.stat.v_blank_ir_enable {
-                    registers.request_interrupt(&InterruptSource::Stat);
-                } else if mode == StatMode::Vblank && registers.stat.v_blank_ir_enable {
-                    registers.request_interrupt(&InterruptSource::Stat);
-                } else if mode == StatMode::Hblank && registers.stat.h_blank_ir_enable {
+                if (mode == StatMode::OamSearch && registers.stat.oam_ir_enable)
+                    || (mode == StatMode::Vblank && registers.stat.v_blank_ir_enable)
+                    || (mode == StatMode::Hblank && registers.stat.h_blank_ir_enable)
+                {
                     registers.request_interrupt(&InterruptSource::Stat);
                 }
             }
@@ -171,36 +166,34 @@ impl Ppu {
             t -= step as u8;
 
             // Hit boundary? Handle once, then loop continues
-            if dot == next_boundary {
-                if next_boundary == 456 {
-                    // End of scanline
-                    dot = 0;
-                    ly = ly.wrapping_add(1);
+            if dot == next_boundary && next_boundary == 456 {
+                // End of scanline
+                dot = 0;
+                ly = ly.wrapping_add(1);
 
-                    // Update LY & coincidence once per line
-                    registers.ly = (ly & 0x00FF) as u8;
-                    registers.update_stat_coincidence();
+                // Update LY & coincidence once per line
+                registers.ly = (ly & 0x00FF) as u8;
+                registers.update_stat_coincidence();
 
-                    if ly == 144 {
-                        // Entering VBlank
-                        registers.stat.mode = StatMode::Vblank;
-                        registers.request_interrupt(&InterruptSource::VBlank);
-                        if registers.stat.v_blank_ir_enable {
-                            registers.request_interrupt(&InterruptSource::Stat);
-                        }
-                        // Coincidence already updated just above
-                        self.frame_ready = true;
-                    } else if ly >= 154 {
-                        // Wrap to new frame
-                        ly = 0;
-                        dot = 0;
-                        registers.ly = 0;
-                        registers.stat.mode = StatMode::OamSearch;
-                        registers.update_stat_coincidence();
+                if ly == 144 {
+                    // Entering VBlank
+                    registers.stat.mode = StatMode::Vblank;
+                    registers.request_interrupt(&InterruptSource::VBlank);
+                    if registers.stat.v_blank_ir_enable {
+                        registers.request_interrupt(&InterruptSource::Stat);
                     }
+                    // Coincidence already updated just above
+                    self.frame_ready = true;
+                } else if ly >= 154 {
+                    // Wrap to new frame
+                    ly = 0;
+                    dot = 0;
+                    registers.ly = 0;
+                    registers.stat.mode = StatMode::OamSearch;
+                    registers.update_stat_coincidence();
                 }
-                // else: just crossed 80 or 252; loop will recompute mode next iteration
             }
+            // else: just crossed 80 or 252; loop will recompute mode next iteration
         }
         self.dot_counter = dot;
     }

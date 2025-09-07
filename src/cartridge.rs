@@ -68,24 +68,15 @@ impl Cartridge {
 /// These bytes contain a 16-bit (big-endian) checksum simply computed as the sum of all the bytes of the cartridge ROM (except these two checksum bytes).
 #[derive(Debug)]
 pub struct Header {
-    pub title: String,
-    pub cartridge_type: CartridgeType,
+    pub _title: String,
     pub rom_size: usize,
-    pub ram_size: usize,
-    pub checksum: u8,
+    pub _checksum: u8,
+    pub _cartridge_type: CartridgeType,
 }
 
 impl Header {
     fn new(data: &[u8]) -> Self {
-        let logo = &data[0x104..=0x133];
-
-        if logo != expected_logo() {
-            panic!(
-                "Unexpected logo.\nexpected={:?}\nfound={:?}",
-                expected_logo(),
-                logo
-            )
-        }
+        //let logo = &data[0x104..=0x133];
 
         let title = &data[0x134..=0x143];
 
@@ -146,11 +137,10 @@ impl Header {
         }
 
         Header {
-            title,
-            cartridge_type,
+            _title: title,
+            _cartridge_type: cartridge_type,
             rom_size,
-            checksum,
-            ram_size,
+            _checksum: checksum,
         }
     }
 }
@@ -198,13 +188,4 @@ impl From<u8> for CartridgeType {
             _ => panic!("Unsupported cartridge type: {:#x}", value),
         }
     }
-}
-
-fn expected_logo() -> Vec<u8> {
-    vec![
-        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00,
-        0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD,
-        0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB,
-        0xB9, 0x33, 0x3E,
-    ]
 }

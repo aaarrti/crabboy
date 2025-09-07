@@ -10,10 +10,7 @@ use cpu::Cpu;
 use memory::Memory;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use tracing_subscriber::{
-    layer::SubscriberExt, reload, util::SubscriberInitExt, EnvFilter, Layer, Registry,
-};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 use tracing_appender::non_blocking;
 use tracing_appender::{non_blocking::WorkerGuard, rolling};
@@ -90,8 +87,7 @@ fn main() {
         }
         //let start_time = Instant::now();
         let num_cycles = cpu.step(&mut memory);
-        memory.registers.timer_tick(num_cycles);
-        memory.registers.serial_tick(num_cycles);
+        memory.tick(num_cycles);
         ppu.tick(&mut memory.registers, num_cycles);
 
         //let elapsed = start_time.elapsed();
@@ -101,8 +97,7 @@ fn main() {
 
         if let Some(interrupt) = memory.registers.get_pending_interrupt() {
             let num_cycles = cpu.service_interrupt(&interrupt, &mut memory);
-            memory.registers.timer_tick(num_cycles);
-            memory.registers.serial_tick(num_cycles);
+            memory.tick(num_cycles);
             ppu.tick(&mut memory.registers, num_cycles);
         }
         ppu.draw_frame(&memory);

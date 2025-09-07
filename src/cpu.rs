@@ -66,7 +66,7 @@ impl Default for Registers {
             e: 0xD8,
             h: 0x01,
             l: 0x4D,
-            pc: 0x0100,
+            pc: GAME_START,
             sp: 0xFFFE,
         }
     }
@@ -159,7 +159,6 @@ impl Debug for Registers {
 }
 
 impl Cpu {
-    #[inline(always)]
     fn fetch_imm8(&mut self, memory: &Memory) -> u8 {
         let byte = memory.read(self.registers.pc);
         self.registers.pc = self.registers.pc.wrapping_add(1);
@@ -225,7 +224,6 @@ impl Cpu {
     /// return number of CPU T-cycles the step consumed
     #[tracing::instrument(skip(memory))]
     pub fn step(&mut self, memory: &mut Memory) -> u8 {
-
         let opcode = self.fetch_imm8(memory);
         match opcode {
             0x00 => {
@@ -861,7 +859,6 @@ impl Cpu {
 }
 
 /// Split a 16-bit value into low and high bytes (little-endian)
-#[inline(always)]
 fn split_u16(value: u16) -> (u8, u8) {
     let lo = (value & 0x00FF) as u8;
     let hi = (value >> 8) as u8;
@@ -869,12 +866,10 @@ fn split_u16(value: u16) -> (u8, u8) {
 }
 
 /// Join low and high bytes into a 16-bit value (little-endian)
-#[inline(always)]
 fn join_u16(lo: u8, hi: u8) -> u16 {
     u16::from_le_bytes([lo, hi])
 }
 
-#[inline(always)]
 fn adc(a: u8, b: u8) -> (u8, Flags) {
     let (result, carry) = a.overflowing_add(b);
     // Half-carry: if carry from bit 2
@@ -890,7 +885,6 @@ fn adc(a: u8, b: u8) -> (u8, Flags) {
     (result, flags)
 }
 
-#[inline(always)]
 fn dec(a: u8, flags: &Flags) -> (u8, Flags) {
     // { "Z": "Z", "N": "1", "H": "H", "C": "-"}
     let result = a.wrapping_sub(1);
@@ -905,7 +899,6 @@ fn dec(a: u8, flags: &Flags) -> (u8, Flags) {
     (result, flags)
 }
 
-#[inline(always)]
 fn inc(a: u8, flags: &Flags) -> (u8, Flags) {
     let result = a.wrapping_add(1);
     let flags = Flags {
@@ -917,7 +910,6 @@ fn inc(a: u8, flags: &Flags) -> (u8, Flags) {
     (result, flags)
 }
 
-#[inline(always)]
 fn xor(a: u8, b: u8) -> (u8, Flags) {
     let result = a ^ b;
     let flags = Flags {
@@ -930,7 +922,6 @@ fn xor(a: u8, b: u8) -> (u8, Flags) {
     (result, flags)
 }
 
-#[inline(always)]
 fn or(a: u8, b: u8) -> (u8, Flags) {
     // {"Z": "Z", "N": "0", "H": "0", "C": "0"}
     let result = a | b;
@@ -943,7 +934,6 @@ fn or(a: u8, b: u8) -> (u8, Flags) {
     (result, flags)
 }
 
-#[inline(always)]
 fn cp(a: u8, b: u8) -> Flags {
     let result = a.wrapping_sub(b);
 
@@ -955,7 +945,6 @@ fn cp(a: u8, b: u8) -> Flags {
     }
 }
 
-#[inline(always)]
 fn and(a: u8, b: u8) -> (u8, Flags) {
     //  flags: {"Z": "Z", "N": "0", "H": "1", "C": "0"}
 
@@ -974,7 +963,6 @@ fn and(a: u8, b: u8) -> (u8, Flags) {
 /// Rotate left through carry for an 8-bit value.
 /// Returns the new value and updates the CPU flags.
 /// If `set_z_flag` is false (e.g. for `RL A`), Z flag is not updated.
-#[inline(always)]
 fn rl(value: u8, flags: &Flags, set_z_flag: bool) -> (u8, Flags) {
     let bit7 = (value & 0x80) != 0;
     let carry_in = if flags.c { 1 } else { 0 };
@@ -993,13 +981,11 @@ fn rl(value: u8, flags: &Flags, set_z_flag: bool) -> (u8, Flags) {
     (result, new_flags)
 }
 
-#[inline(always)]
 fn jr(pc: u16, offset: u8) -> u16 {
     let signed_offset = offset as i8;
     pc.wrapping_add(signed_offset as i16 as u16)
 }
 
-#[inline(always)]
 fn rla(a: u8, flags: &Flags) -> (u8, Flags) {
     // Save old carry
     let old_carry = if flags.c { 1 } else { 0 };
@@ -1020,7 +1006,6 @@ fn rla(a: u8, flags: &Flags) -> (u8, Flags) {
     (result, new_flags)
 }
 
-#[inline(always)]
 fn sub(a: u8, b: u8) -> (u8, Flags) {
     let result = a.wrapping_sub(b);
 
@@ -1034,7 +1019,6 @@ fn sub(a: u8, b: u8) -> (u8, Flags) {
 
 /// Perform an 8-bit addition like ADD A, r/imm/(HL).
 /// Returns the new A value and the new flags.
-#[inline(always)]
 fn add(a: u8, val: u8) -> (u8, Flags) {
     let (res, carry) = a.overflowing_add(val);
 
@@ -1051,7 +1035,6 @@ fn add(a: u8, val: u8) -> (u8, Flags) {
     (res, flags)
 }
 
-#[inline(always)]
 fn rra(a: u8, carry_in: bool) -> (u8, Flags) {
     let new_c = (a & 0x01) != 0; // old bit0 becomes Carry
     let result = (a >> 1) | if carry_in { 0x80 } else { 0x00 }; // carry_in to bit7

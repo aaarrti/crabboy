@@ -1,7 +1,6 @@
 use crate::cartridge::Cartridge;
 use crate::util::{is_nth_bit_set, set_nth_bit};
 use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use anyhow::{anyhow, Result};
 use derivative::Derivative;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -103,23 +102,23 @@ const NR_10_REG: usize = 0xFF10;
 
 const NR_11_REG: usize = 0xFF11;
 
-const NR_12_REG: usize = 0xFF12;
+//const NR_12_REG: usize = 0xFF12;
 const NR_13_REG: usize = 0xFF13;
 const NR_14_REG: usize = 0xFF14;
-const NR_21_REG: usize = 0xFF16;
-const NR_22_REG: usize = 0xFF17;
-const NR_23_REG: usize = 0xFF18;
-const NR_24_REG: usize = 0xFF19;
+// const NR_21_REG: usize = 0xFF16;
+//const NR_22_REG: usize = 0xFF17;
+//const NR_23_REG: usize = 0xFF18;
+//const NR_24_REG: usize = 0xFF19;
 const NR_30_REG: usize = 0xFF1A;
 
-const NR_31_REG: usize = 0xFF1B;
-const NR_32_REG: usize = 0xFF1C;
-const NR_33_REG: usize = 0xFF1D;
-const NR_34_REG: usize = 0xFF1E;
+//const NR_31_REG: usize = 0xFF1B;
+//const NR_32_REG: usize = 0xFF1C;
+//const NR_33_REG: usize = 0xFF1D;
+//const NR_34_REG: usize = 0xFF1E;
 const NR_41_REG: usize = 0xFF20;
-const NR_42_REG: usize = 0xFF21;
-const NR_43_REG: usize = 0xFF22;
-const NR_44_REG: usize = 0xFF23;
+//const NR_42_REG: usize = 0xFF21;
+//const NR_43_REG: usize = 0xFF22;
+//const NR_44_REG: usize = 0xFF23;
 const NR_50_REG: usize = 0xFF24;
 const NR_51_REG: usize = 0xFF25;
 const NR_52_REG: usize = 0xFF26;
@@ -138,10 +137,10 @@ const WY_REG: usize = 0xFF4A;
 const WX_REG: usize = 0xFF4B;
 const IE_REG: usize = 0xFFFF;
 
-const TILE_DATA_START: usize = 0x8000;
-const TILE_DATA_END: usize = 0x97FF;
-const BG_MAP_0_START: usize = 0x9800;
-const BG_MAP_0_END: usize = 0x9BFF;
+//const TILE_DATA_START: usize = 0x8000;
+//const TILE_DATA_END: usize = 0x97FF;
+//const BG_MAP_0_START: usize = 0x9800;
+//const BG_MAP_0_END: usize = 0x9BFF;
 const BOOT_ROM_DISABLE_REG: usize = 0xFF50;
 
 /// Interrupt Handling
@@ -213,17 +212,14 @@ impl InterruptSource {
 /// FFFF    FFFF    Interrupt Enable register (IE)
 pub struct Memory {
     rom_0: [u8; ROM_0_END + 1],
-    // rom_n: Option<[u8; ROM_N_END - ROM_N_START + 1]>,
     vram: Vram,
-    // ex_ram: Option<[u8; EX_RAM_END - EX_RAM_START + 1]>,
     pub registers: Registers,
     // 2 banks together
     wram: Wram,
     hram: Hram,
-    //pub cartridge: Cartridge,
     io_: IoMem,
-    oam: ObjectAttributeMemory,
-    rom_size: usize,
+    oam: [u8; OAM_END - OAM_START + 1],
+    _rom_size: usize,
 }
 
 impl Memory {
@@ -238,10 +234,11 @@ impl Memory {
         // mmap first 16KB
         let data = cartridge.data.as_slice();
         rom_0.copy_from_slice(&data[0..=ROM_0_END]);
-        // rom_n.copy_from_slice(&cartridge[ROM_N_START..ROM_N_END + 1]);
 
         let hram = Hram::new();
         let registers = Registers::default();
+
+        let oam = [0; OAM_END - OAM_START + 1];
 
         let mut memory = Memory {
             rom_0,
@@ -251,8 +248,8 @@ impl Memory {
             registers,
             //cartridge,
             io_,
-            oam: ObjectAttributeMemory::default(),
-            rom_size: cartridge.header.rom_size,
+            oam,
+            _rom_size: cartridge.header.rom_size,
         };
         tracing::info!("Initializing memory");
         // Use these DMG/MGB post-boot values recorded at PC=$0100:
@@ -323,7 +320,7 @@ impl Memory {
                 // return Ok(self.rom_n[address]);
                 panic!("ROM n not implemeted")
             }
-            VRAM_START..=VRAM_END => self.vram.0[address - VRAM_START],
+            VRAM_START..=VRAM_END => self.vram.read(address),
 
             WRAM_START..=WRAM_END => self.wram.read(address),
 
@@ -391,7 +388,9 @@ impl Memory {
 
             OAM_START..=OAM_END => {
                 match &self.registers.stat.mode {
-                    StatMode::Hblank | StatMode::Vblank => self.oam.write(address, value),
+                    StatMode::Hblank | StatMode::Vblank => {
+                        self.oam[address - OAM_START] = value;
+                    }
 
                     mode => {
                         tracing::warn!("Blocking OAM write during mode = {:?}", mode);
@@ -417,6 +416,39 @@ impl Memory {
                 panic!("Illegal address = {:#04x}", address)
             }
         }
+    }
+
+    pub fn tick(&mut self, num_cycles: u8) {
+        self.registers
+            .serial
+            .tick(num_cycles, &mut self.registers.if_);
+        self.registers
+            .timer
+            .tick(num_cycles, &mut self.registers.if_);
+        self.tick_oam_dma(num_cycles);
+    }
+
+    fn tick_oam_dma(&mut self, tcycles: u8) {
+        let tcycles = tcycles as u32;
+        if !self.registers.oamdma.active {
+            return;
+        }
+        let src_base = (self.registers.oamdma.src_high as u16) << 8;
+
+        let mut t = tcycles + self.registers.oamdma.timer_t;
+        while self.registers.oamdma.active && t >= 4 {
+            t -= 4;
+            let src = src_base.wrapping_add(self.registers.oamdma.idx);
+            let dst = OAM_START as u16 + self.registers.oamdma.idx;
+
+            let b = self.read_dma_source(src); // see access rules below
+            self.write_oam_dma(dst, b); // write to OAM bypassing normal bus locks
+            self.registers.oamdma.idx += 1;
+            if self.registers.oamdma.idx == 160 {
+                self.registers.oamdma.active = false;
+            }
+        }
+        self.registers.oamdma.timer_t = t;
     }
 
     fn tile_data_base_and_index(&self, tile_index: u8) -> u16 {
@@ -460,12 +492,12 @@ impl Memory {
         (b1 << 1) | b0
     }
 
-    fn sprite_height(&self) -> u8 {
-        match self.registers.lcdc.obj_size {
-            ObjSize::Size8x8 => 8,
-            ObjSize::Size8x16 => 16,
-        }
-    }
+    //fn sprite_height(&self) -> u8 {
+    //    match self.registers.lcdc.obj_size {
+    //        ObjSize::Size8x8 => 8,
+    //        ObjSize::Size8x16 => 16,
+    //    }
+    //}
 
     /// Inputs (conceptual)
     /// vram[0x2000]            # DMG VRAM window (0x8000–0x9FFF mapped to 0..0x1FFF here)
@@ -542,104 +574,64 @@ impl Memory {
                     }
                 }
             }
-
-            if self.registers.lcdc.obj_enable {
-                let h = self.sprite_height();
-
-                let mut candidates: Vec<u8> = Vec::with_capacity(10);
-
-                for i in 0..39 {
-                    let sy_on_screen = self.oam.sprites[i].y.wrapping_sub(16);
-                    if ly >= sy_on_screen as usize && ly < (sy_on_screen + h) as usize {
-                        candidates.push(i as u8);
-                    }
-                    if candidates.len() == 10 {
-                        break;
-                    }
-                }
-                // For each screen X, overlay sprites (first visible wins)
-                for i in candidates {
-                    let sx_on_screen = self.oam.sprites[i as usize].x.wrapping_sub(8);
-                    if sx_on_screen >= WIDTH as u8 {
-                        continue;
-                    }
-                    let attr = self.oam.sprites[i as usize].attr;
-                    let tile = self.oam.sprites[i as usize].tile;
-                    // 8x16: tile index points to pair; select top/bottom half
-                }
-
-                //
-                //     if h == 16:
-                //         # ignore tile bit0; top uses &~1, bottom uses |1
-                //         if (LY - sy_on_screen) < 8:
-                //             tile = tile & 0xFE
-                //             row_in_tile = (LY - sy_on_screen)
-                //         else:
-                //             tile = tile | 0x01
-                //             row_in_tile = (LY - sy_on_screen) - 8
-                //     else:
-                //         row_in_tile = (LY - sy_on_screen)
-                //
-                //     # Y-flip
-                //     if attr.bit6 == 1: row_in_tile = 7 - row_in_tile
-                //
-                //     # Determine VRAM tile address (sprite uses same tiledata mode as BG)
-                //     tile_addr = tiledata_base_and_index(tile, LCDC.bit4)
-                //
-                //     # For each X that sprite covers
-                //     for px in 0..7:
-                //         x = sx_on_screen + px
-                //         if x >= 160: continue
-                //
-                //         col = px
-                //         # X-flip
-                //         if attr.bit5 == 1: col = 7 - col
-                //
-                //         color_idx = fetch_tile_pixel(vram, tile_addr, row_in_tile, col)
-                //         if color_idx == 0: continue     # sprite color 0 is transparent
-                //
-                //         # choose palette
-                //         palette = (attr.bit4 == 1) ? OBP1 : OBP0
-                //         sprite_shade = map_palette_DMG(color_idx, palette)
-                //
-                //         # priority: attr bit7 = 1 means "behind BG" (but not behind BG color 0)
-                //         bg_idx_here = frame_meta_coloridx_at(LY,x)   # track per-pixel last BG/Win index
-                //         if attr.bit7 == 1 and bg_idx_here != 0:
-                //             continue  # hidden behind nonzero BG/Win
-                //
-                //         # draw and do NOT overwrite by later sprites (OAM priority)
-                //         frame[LY][x] = sprite_shade
-            }
         }
 
-        /*
-            for LY in 0..143:
-        # 1) Background (unless LCDC.bit0==0; then use color 0 on DMG)
-        for x in 0..159:
-
-
-        # 2) Window overlay (if enabled and covering this LY)
-        if LCDC.bit6 == 1 and LY >= WY:
-
-
-        # 3) Sprites (if enabled)
-        if LCDC.bit1 == 1:
-            h = sprite_height(LCDC)
-
-            # Collect up to 10 sprites covering this LY, in OAM order
-            candidates = []
-            for i in 0..39:
-                sy_on_screen = oam[i].y.wrapping_sub(16)   # Y position
-                if LY >= sy_on_screen and LY < sy_on_screen + h:
-                    candidates.push(i)
-                    if candidates.len == 10: break
-
-
-                end for
-            end for
-            */
-
         frame.iter().flatten().cloned().collect()
+    }
+
+    /// Read a source byte for OAM DMA (FF46). This bypasses CPU access locks.
+    pub fn read_dma_source(&self, address: u16) -> u8 {
+        let address = address as usize;
+        match address {
+            // 16 KiB fixed ROM bank
+            0..=ROM_0_END => self.rom_0[address],
+
+            // 16 KiB switchable ROM bank (use your mapper; placeholder shown)
+            ROM_N_START..=ROM_N_END => {
+                panic!("ROM X not supported");
+            }
+
+            // VRAM: RAW read (no CPU LCD-mode restrictions)
+            VRAM_START..=VRAM_END => self.vram.read(address),
+
+            // External (cartridge) RAM if you have it; else 0xFF
+            EX_RAM_START..=EX_RAM_END => {
+                panic!("EX-RAM not supported");
+            }
+
+            // WRAM (C000–DFFF)
+            WRAM_START..=WRAM_END => self.wram.read(address),
+
+            // Echo RAM (E000–FDFF) mirrors WRAM (C000–DDFF)
+            ECHO_RAM_START..=ECHO_RAM_END => self.wram.read(address - ECHO_RAM_START + WRAM_START),
+
+            // OAM as source: treat as 0xFF
+            OAM_START..=OAM_END => 0xFF,
+
+            // Unusable area
+            0xFEA0..=0xFEFF => 0xFF,
+
+            // I/O registers: safest to return 0xFF as source
+            IO_START..=IO_END => 0xFF,
+
+            // HRAM
+            HRAM_START..=HRAM_END => self.hram.read(address),
+
+            // IE register (FFFF) – return 0xFF as source
+            IE_REG => 0xFF,
+
+            _ => {
+                panic!("Illegal read from OAM DMA at address {:#x}", address);
+            }
+        }
+    }
+
+    /// Write directly into OAM for DMA (FE00–FE9F), bypassing CPU OAM locks.
+    pub fn write_oam_dma(&mut self, addr: u16, val: u8) {
+        let addr = addr as usize;
+        debug_assert!((OAM_START..=OAM_END).contains(&addr));
+        let i = addr - OAM_START;
+        self.oam[i] = val;
     }
 }
 
@@ -665,14 +657,13 @@ impl Memory {
 ///   0x9C00   0x9FFF   BG Map 1 (Tile Map 1) .      Alternate background tile map
 struct Vram([u8; VRAM_END - VRAM_START + 1]);
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Serial {
     sb: u8, // FF01
     sc: u8, // FF02 (only bits 7 and 0 meaningful; others read as 1)
     active: bool,
     timer: u32, // T-cycles remaining
     last_tx: u8,
-    log_enabled: bool,
     line_buf: String,
 }
 
@@ -781,69 +772,6 @@ impl Vram {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy)]
-struct SpriteAttribute {
-    y: u8,
-    x: u8,
-    tile: u8,
-    attr: u8,
-}
-
-/// In the Game Boy, OAM (Object Attribute Memory) is a 160-byte table at 0xFE00–0xFE9F.
-/// It holds all the sprite attribute data the PPU needs to draw sprites. There are 40 sprite entries, each 4 bytes long:
-///
-/// Layout per sprite (4 bytes)
-/// Offset  Name    Meaning
-/// +0  Y position  Sprite’s vertical position on screen = (value − 16). Values 0–255 wrap.
-/// +1  X position  Sprite’s horizontal position = (value − 8). Values 0–255 wrap.
-/// +2  Tile index  Which 8×8 tile to use (from tile data in VRAM). Interpretation depends on LCDC (8×8 vs 8×16 sprites).
-/// +3  Attributes  Flags controlling rendering (see below).
-#[derive(Debug)]
-struct ObjectAttributeMemory {
-    sprites: [SpriteAttribute; 40usize],
-}
-
-impl Default for ObjectAttributeMemory {
-    fn default() -> Self {
-        let sprites = [SpriteAttribute::default(); 40];
-
-        ObjectAttributeMemory { sprites }
-    }
-}
-
-impl ObjectAttributeMemory {
-    fn write(&mut self, address: usize, value: u8) {
-        // index = addr - 0xFE00   // 0–159
-        // sprite_id = index / 4   // 0–39
-        // field = index % 4       // 0..=3
-
-        let index = address - OAM_START;
-        let sprite_id = index / 4;
-
-        let sprite = &mut self.sprites[sprite_id];
-
-        match index % 4 {
-            0 => {
-                sprite.y = value;
-            }
-
-            1 => {
-                sprite.x = value;
-            }
-
-            2 => {
-                sprite.tile = value;
-            }
-
-            3 => {
-                sprite.attr = value;
-            }
-
-            _ => panic!("this is unexpected"),
-        }
-    }
-}
-
 struct Hram([u8; HRAM_END - HRAM_START + 1]);
 
 impl Hram {
@@ -867,10 +795,6 @@ struct Wram([u8; WRAM_END - WRAM_START + 1]);
 impl Wram {
     fn new() -> Self {
         Self([0; WRAM_END - WRAM_START + 1])
-    }
-
-    fn matches(address: usize) -> bool {
-        (WRAM_START..=WRAM_END).contains(&address)
     }
 
     fn read(&self, address: usize) -> u8 {
@@ -944,16 +868,6 @@ pub struct Registers {
     // These two registers specify the on-screen coordinates of the Window’s top-left pixel.
     wy: u8,
     wx: u8,
-    // div: Div,
-    /// This timer is incremented at the clock frequency specified by the TAC register.
-    /// When the value overflows it is reset to the value specified in TMA and an interrupt is requested, as described below.
-    #[derivative(Debug = "ignore")]
-    tima: Tima,
-    /// When TIMA overflows, it is reset to the value in this register and an interrupt is requested.
-    #[derivative(Debug = "ignore")]
-    tma: Tma,
-    #[derivative(Debug = "ignore")]
-    tac: TimerControl,
     // This register assigns gray shades to the color indices of the BG and Window tiles.
     bgp: u8,
     #[derivative(Debug = "ignore")]
@@ -993,11 +907,12 @@ pub struct Registers {
     #[derivative(Debug = "ignore")]
     nr41: Nr41,
     #[derivative(Debug = "ignore")]
-    dma: Dma,
+    timer: Timer,
+    #[derivative(Debug = "ignore")]
+    oamdma: OamDma,
 }
 
 impl Registers {
-    #[inline(always)]
     pub fn get_pending_interrupt(&self) -> Option<InterruptSource> {
         // If IME and IE allow the servicing of more than one of the requested interrupts,
         // the interrupt with the highest priority is serviced first.
@@ -1022,34 +937,6 @@ impl Registers {
             _ => return None,                // unknown/unused bits
         };
         Some(src)
-    }
-
-    pub fn timer_tick(&mut self, n_cycles: u8) {
-        if !self.tac.enable {
-            return;
-        }
-
-        self.tima.pending_cycles += n_cycles as u32;
-
-        if self.tima.pending_cycles < self.tac.clock_select.increment_every {
-            return;
-        }
-
-        let (value, overlow) = self.tima.value.overflowing_add(1);
-        self.tima.value = value;
-        self.tima.pending_cycles -= self.tac.clock_select.increment_every;
-
-        if overlow {
-            self.tima.value = self.tma.0;
-            self.request_interrupt(&InterruptSource::Timer);
-        }
-    }
-
-    pub fn cycle_duration(&self, n_cycles: u8) -> std::time::Duration {
-        let n_cycles = n_cycles as f64;
-        let period: f64 = 1f64 / self.tac.clock_select.frequency as f64;
-        let duration = (n_cycles * period * 1_000_000f64) as u64;
-        std::time::Duration::from_micros(duration)
     }
 
     fn read(&self, address: usize) -> u8 {
@@ -1092,11 +979,11 @@ impl Registers {
             }
 
             TMA_REG => {
-                self.tma.0 = value;
+                tracing::warn!("TMA reg not implemented");
             }
 
             TAC_REG => {
-                self.tac.write(value);
+                tracing::warn!("TAC not implemented");
             }
 
             BGP_REG => {
@@ -1174,7 +1061,7 @@ impl Registers {
             }
 
             TIMA_REG => {
-                self.tima.write(value);
+                tracing::warn!("TIMA reg not implemeted");
             }
 
             NR_30_REG => {
@@ -1186,7 +1073,7 @@ impl Registers {
             }
 
             DMA_REG => {
-                self.dma.write(value);
+                self.oamdma.write(value);
             }
 
             _ => {
@@ -1247,34 +1134,7 @@ impl Registers {
     fn map_palette_dmg(&self, idx: u8) -> u8 {
         (self.bgp >> (idx * 2)) & 0b11
     }
-
-    pub fn serial_tick(&mut self, num_cycles: u8) {
-        self.serial.tick(num_cycles, &mut self.if_);
-    }
 }
-
-/// This timer is incremented at the clock frequency specified by the TAC register ($FF07).
-/// When the value overflows (exceeds $FF) it is reset to the value
-/// specified in TMA (FF06) and an interrupt is requested, as described below.
-#[derive(Debug, Default)]
-struct Tima {
-    value: u8,
-    pending_cycles: u32,
-}
-
-impl Tima {
-    fn write(&mut self, value: u8) {
-        self.value = value;
-    }
-}
-
-/// When TIMA overflows, it is reset to the value in this register and an interrupt is requested.
-/// Example of use: if TMA is set to $FF, an interrupt is requested at the clock frequency selected
-/// in TAC (because every increment is an overflow). However, if TMA is set to $FE,
-/// an interrupt is only requested every two increments, which effectively
-/// divides the selected clock by two. Setting TMA to $FD would divide the clock by three, and so on.
-#[derive(Debug, Default)]
-struct Tma(u8);
 
 #[derive(Default, Debug)]
 struct Joypad {
@@ -1306,21 +1166,6 @@ impl Joypad {
         self.select_d_pad = is_nth_bit_set(value, 4);
         self.select_buttons = is_nth_bit_set(value, 5);
     }
-}
-
-#[derive(Default, Debug)]
-struct TimerControl {
-    /// Controls whether TIMA is incremented. Note that DIV is always counting, regardless of this bit
-    enable: bool,
-    clock_select: ClockSource,
-}
-
-#[derive(Debug)]
-struct ClockSource {
-    // cycles
-    increment_every: u32,
-    // Hz
-    frequency: u32,
 }
 
 #[derive(Debug, Default)]
@@ -1362,46 +1207,6 @@ impl From<(bool, bool)> for Color {
             (true, false) => Color::DarkGray,
             (true, true) => Color::Black,
         }
-    }
-}
-
-impl Default for ClockSource {
-    fn default() -> Self {
-        Self {
-            increment_every: 256,
-            frequency: 4096,
-        }
-    }
-}
-
-impl TimerControl {
-    fn write(&mut self, value: u8) {
-        self.enable = is_nth_bit_set(value, 2);
-
-        let clock_select = value & 0b_0000_0011;
-
-        // Clock select: Controls the frequency at which TIMA is incremented, as follows:
-        //
-        // Clock    Increment every    Frequency (Hz)
-        // 00       256 M-cycles       4096
-        // 01       4 M-cycles         262144
-        // 10       16 M-cycles        65536
-        // 11       64 M-cycles        16384
-
-        let (cycle, freq) = match clock_select {
-            0 => (256, 4096),
-            1 => (4, 262144),
-            2 => (16, 65536),
-            3 => (64, 16384),
-            _ => {
-                panic!("Unsupported clock select {:#04x}", clock_select)
-            }
-        };
-
-        self.clock_select = ClockSource {
-            increment_every: cycle,
-            frequency: freq,
-        };
     }
 }
 
@@ -1530,38 +1335,25 @@ impl Nr51 {
     }
 }
 
-#[derive(Debug, Default)]
-struct OutputLevel(u8);
-
-impl From<u8> for OutputLevel {
-    fn from(value: u8) -> Self {
-        if value <= 7 {
-            OutputLevel(value)
-        } else {
-            panic!("Output level must be in range [0, 7]")
-        }
-    }
-}
-
 /// Bit 7-4 – SO2 (Right speaker) output level (0–7)
 /// Bit 3   – Vin to SO2 (1 = enable, mixes external Vin into right output)
 /// Bit 2-0 – SO1 (Left speaker) output level (0–7)
 /// Bit 0   – Vin to SO1 (1 = enable, mixes external Vin into left output)
 #[derive(Debug, Default)]
 struct Nr50 {
-    right_speaker: OutputLevel,
+    right_speaker: u8,
     right_vin: bool,
-    left_speaker: OutputLevel,
+    left_speaker: u8,
     left_vin: bool,
 }
 
 impl Nr50 {
     fn write(&mut self, value: u8) {
         let right_speaker: u8 = (value >> 4) & 0x0F;
-        self.right_speaker = right_speaker.into();
+        self.right_speaker = right_speaker;
         self.right_vin = is_nth_bit_set(value, 3);
         let left_speaker: u8 = value & 0x07; // 0x07 = 0000_0111
-        self.left_speaker = left_speaker.into();
+        self.left_speaker = left_speaker;
         self.left_vin = is_nth_bit_set(value, 0);
     }
 }
@@ -1642,7 +1434,6 @@ impl Nr14 {
     }
 }
 
-#[inline(always)]
 fn sign_extend_i8(x: u8) -> i16 {
     (x as i8) as i16
 }
@@ -1674,16 +1465,6 @@ impl Nr41 {
     }
 }
 
-#[derive(Debug, Default)]
-struct Dma {}
-
-impl Dma {
-    fn write(&mut self, _value: u8) {
-        tracing::warn!("Dma not implemented")
-    }
-}
-
-
 /// While OAM DMA is active on DMG, the CPU can only access HRAM ($FF80–$FFFE).
 /// Code typically copies a tiny loop into HRAM, writes FF46, then busy-waits until DMA finishes.
 /// Also note the PPU can’t read OAM properly during the transfer; most games do OAM DMA in VBlank to avoid sprite glitches
@@ -1697,11 +1478,10 @@ impl Dma {
 #[derive(Debug, Default)]
 struct OamDma {
     active: bool,
-    src_high: u8,      // last written to FF46
-    idx: u16,          // 0..=159
-    timer_t: u32,      // T-cycles until next byte copy
+    src_high: u8, // last written to FF46
+    idx: u16,     // 0..=159
+    timer_t: u32, // T-cycles until next byte copy
 }
-
 
 impl OamDma {
     fn write(&mut self, val: u8) {
@@ -1710,26 +1490,70 @@ impl OamDma {
         self.idx = 0;
         self.timer_t = 0; // first byte can be copied immediately after the write completes
     }
+}
 
-    fn tick(&mut self, tcycles: u32,
-    //        mem: &mut Bus
-    ) {
-        if !self.active { return; }
-        let src_base = (self.src_high as u16) << 8;
+/// MMIO writes that can cause immediate effects
+/// Write DIV:
+///     do old = observed(...);
+///     div=0;
+///     new = observed(...);
+///     i f old==1 && new==0, tick TIMA once (with overflow rules).
+///     Write TAC: recompute observed before/after; if falling edge, tick TIMA once.
+#[derive(Debug, Default)]
+struct Timer {
+    div: u16, // internal divider (increments every T-cycle)
+    tima: u8,
+    tma: u8,
+    tac: u8,          // bit2: enable, bits1-0: freq
+    reload_delay: u8, // 0=none; 1=just overflowed; 2=reload pending (counts down per M-cycle)
+}
 
-        let mut t = tcycles + self.timer_t;
-        while self.active && t >= 4 {
-            t -= 4;
-            let src = src_base.wrapping_add(self.idx);
-            let dst = 0xFE00u16 + self.idx;
-            // FIXME
-            //let b = mem.read_dma_source(src);   // see access rules below
-            //mem.write_oam_dma(dst, b);          // write to OAM bypassing normal bus locks
-            self.idx += 1;
-            if self.idx == 160 {
-                self.active = false;
+impl Timer {
+    fn bit_for(&self) -> u8 {
+        match self.tac & 0b11 {
+            0 => 9,
+            1 => 3,
+            2 => 5,
+            _ => 7,
+        }
+    }
+
+    fn observed(&self) -> u8 {
+        if (self.tac & 0x04) == 0 {
+            0
+        } else {
+            ((self.div >> self.bit_for()) & 1) as u8
+        }
+    }
+
+    fn tick(&mut self, tcycles: u8, if_reg: &mut u8) {
+        // Before incrementing div, sample old observed
+        let mut old_obs = self.observed();
+
+        // Advance divider by each T; handle falling edges conservatively
+        for _ in 0..tcycles {
+            self.div = self.div.wrapping_add(1);
+            let new_obs = self.observed();
+            if old_obs == 1 && new_obs == 0 {
+                // TIMA tick
+                if self.tima == 0xFF {
+                    self.tima = 0x00;
+                    self.reload_delay = 2; // over the next 1 M-cycle (4T), then reload
+                } else {
+                    self.tima = self.tima.wrapping_add(1);
+                }
+            }
+            old_obs = new_obs;
+
+            // Handle the delayed reload timing every M-cycle if you prefer,
+            // or just decrement per T and trigger when reaching 0:
+            if self.reload_delay > 0 {
+                self.reload_delay -= 1;
+                if self.reload_delay == 0 {
+                    self.tima = self.tma;
+                    *if_reg |= 0x04; // request Timer interrupt
+                }
             }
         }
-        self.timer_t = t;
     }
 }

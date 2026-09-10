@@ -307,6 +307,8 @@ impl Memory {
         memory
     }
 
+
+    #[tracing::instrument(skip(self))]
     pub fn read(&self, address: u16) -> u8 {
         let address = address as usize;
 
@@ -351,7 +353,7 @@ impl Memory {
         }
     }
 
-    //#[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self))]
     pub fn write(&mut self, address: u16, value: u8) {
         let address = address as usize;
 

@@ -5,6 +5,7 @@ mod ppu;
 mod util;
 
 use crate::ppu::Ppu;
+use anyhow;
 use clap::Parser;
 use cpu::Cpu;
 use memory::Memory;
@@ -24,13 +25,15 @@ static HALT_REQ: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Parser)]
 struct CliArg {
-    #[arg(short, long)]
-    cartridge: PathBuf,
+    #[arg(short, long, required = true)]
+    rom_path: PathBuf,
     #[arg(short, long, default_value_t = false)]
     debug: bool,
+    #[arg(short, long)]
+    boot_rom_path: Option<PathBuf>,
 }
 
-fn setup_tracing(debug: bool) -> Option<WorkerGuard> {
+fn setup_tracing(enable_debug_logging_file: bool) -> Option<WorkerGuard> {
     // Layer 1: log INFO+ to terminal
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stdout)
@@ -39,46 +42,45 @@ fn setup_tracing(debug: bool) -> Option<WorkerGuard> {
         .with_line_number(true)
         .with_filter(EnvFilter::new("info"));
 
-    if debug {
-        // Layer 2: log TRACE+ to file
-        let file_appender = rolling::minutely("logs", "emu.log");
-        let (nb_file, guard_file) = non_blocking(file_appender);
-
-        let file_layer = tracing_subscriber::fmt::layer()
-            .json()
-            .with_writer(nb_file)
-            .compact()
-            .with_line_number(true)
-            .with_filter(EnvFilter::new("trace")); // everything
-
-        tracing_subscriber::registry()
-            .with(stdout_layer)
-            .with(file_layer)
-            .init();
-
-        Some(guard_file)
-    } else {
-        tracing_subscriber::registry().with(stdout_layer).init();
-        None
+    if !enable_debug_logging_file {
+        return None;
     }
+    // Layer 2: log TRACE+ to file
+    let file_appender = rolling::minutely("logs", "emu.log");
+    let (nb_file, guard_file) = non_blocking(file_appender);
+
+    let file_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(nb_file)
+        .compact()
+        .with_line_number(true)
+        .with_filter(EnvFilter::new("trace")); // everything
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(file_layer)
+        .init();
+
+    Some(guard_file)
 }
 
-fn install_sigint_handler() {
+fn install_sigint_handler() -> anyhow::Result<()> {
     // If you prefer not to use a static, capture an Arc<AtomicBool> instead.
     ctrlc::set_handler(|| {
         tracing::info!("SIGINT received");
         HALT_REQ.store(true, Ordering::SeqCst);
-    })
-    .unwrap();
+    })?;
+    Ok(())
 }
 
-fn main() {
-    let cli_args = CliArg::try_parse().unwrap();
+fn main() -> anyhow::Result<()> {
+    let cli_args = CliArg::try_parse()?;
+
     let _guard = setup_tracing(cli_args.debug);
-    let mut memory = Memory::new(&cli_args.cartridge);
+    let mut memory = Memory::new(&cli_args.rom_path);
     let mut cpu = Cpu::default();
     let mut ppu = Ppu::new();
-    install_sigint_handler();
+    install_sigint_handler()?;
 
     loop {
         if HALT_REQ.load(Ordering::SeqCst) {
@@ -102,4 +104,5 @@ fn main() {
         }
         ppu.draw_frame(&memory);
     }
+    Ok(())
 }

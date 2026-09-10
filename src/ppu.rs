@@ -1,11 +1,7 @@
 use crate::memory::{InterruptSource, Memory, StatMode};
 use crate::{memory, DISPLAY_HEIGHT, DISPLAY_WIDTH, SCALE_FACTOR};
-use glium::glutin::surface::WindowSurface;
-use glium::index::NoIndices;
-use glium::winit::window::Window;
-use glium::{implement_vertex, uniform, winit, Display, Program, Surface, Texture2d, VertexBuffer};
 
-const VERTEX_SHADER: &str = r#"
+const _VERTEX_SHADER: &str = r#"
 #version 140
 in vec2 position;
 in vec2 tex_coords;
@@ -16,7 +12,7 @@ void main() {
 }
 "#;
 
-const FRAGMENT_SHADER: &str = r#"
+const _FRAGMENT_SHADER: &str = r#"
 #version 140
 in vec2 v_tex;
 out vec4 color;
@@ -31,7 +27,6 @@ struct Vertex {
     position: [f32; 2],
     tex_coords: [f32; 2],
 }
-implement_vertex!(Vertex, position, tex_coords);
 
 pub struct Ppu {
     /// Think of it as an internal counter that counts 0..455 T within one LY.
@@ -42,29 +37,17 @@ pub struct Ppu {
     ///     252–455 → HBlank
     dot_counter: u16,
     frame_ready: bool,
-    texture: Texture2d,
-    _window: Window,
-    display: Display<WindowSurface>,
-    vbo: VertexBuffer<Vertex>,
-    indices: NoIndices,
-    program: Program,
 }
 
 impl Ppu {
     pub fn new() -> Self {
         // 1. The **winit::EventLoop** for handling events.
-        let event_loop = winit::event_loop::EventLoop::builder().build().unwrap();
 
         // real GB screen is 160×144, linearly scale it up
         // 2. Create a glutin context and glium Display
-        let (_window, display) = glium::backend::glutin::SimpleWindowBuilder::new()
-            .with_inner_size(DISPLAY_WIDTH * SCALE_FACTOR, DISPLAY_HEIGHT * SCALE_FACTOR)
-            .with_title("crabboy")
-            .build(&event_loop);
 
-        let program = Program::from_source(&display, VERTEX_SHADER, FRAGMENT_SHADER, None).unwrap();
 
-        let verts = vec![
+        let _verts = vec![
             Vertex {
                 position: [-1.0, -1.0],
                 tex_coords: [0.0, 1.0],
@@ -82,32 +65,19 @@ impl Ppu {
                 tex_coords: [1.0, 0.0],
             },
         ];
-        let vbo = VertexBuffer::new(&display, &verts).unwrap();
-        let indices = NoIndices(glium::index::PrimitiveType::TriangleStrip);
 
         // ----- Create texture once -----
-        let empty =
+        let _empty =
             vec![0u8; (DISPLAY_WIDTH * DISPLAY_HEIGHT * 4 * SCALE_FACTOR * SCALE_FACTOR) as usize];
-        let tex = {
-            let raw = glium::texture::RawImage2d::from_raw_rgba_reversed(
-                &empty,
-                (DISPLAY_WIDTH * SCALE_FACTOR, DISPLAY_HEIGHT * SCALE_FACTOR),
-            );
-            Texture2d::new(&display, raw).unwrap()
-        };
+      
 
         Ppu {
             dot_counter: 0,
             frame_ready: false,
-            texture: tex,
-            _window,
-            display,
-            program,
-            indices,
-            vbo,
         }
     }
 
+    #[tracing::instrument(skip(self, registers))]
     pub fn tick(&mut self, registers: &mut memory::Registers, n_cycles: u8) {
         // LCD off: frozen state
         if !registers.lcdc.lcd_ppu_enable {
@@ -198,46 +168,20 @@ impl Ppu {
         self.dot_counter = dot;
     }
 
+
+    #[tracing::instrument(skip(self, memory))]
     pub fn draw_frame(&mut self, memory: &Memory) {
         if !self.frame_ready {
             return;
         }
 
         let fb = memory.decode_framebuffer();
-        let fb = expand_gray_to_rgba_scaled(fb.as_slice());
+        let _fb = expand_gray_to_rgba_scaled(fb.as_slice());
 
         // Upload to texture (top-left origin in our buffer → use *_reversed)
-        let raw = glium::texture::RawImage2d::from_raw_rgba_reversed(
-            &fb,
-            (DISPLAY_WIDTH * SCALE_FACTOR, DISPLAY_HEIGHT * SCALE_FACTOR),
-        );
-
-        self.texture.write(
-            glium::Rect {
-                left: 0,
-                bottom: 0,
-                width: DISPLAY_WIDTH * SCALE_FACTOR,
-                height: DISPLAY_HEIGHT * SCALE_FACTOR,
-            },
-            raw,
-        );
 
         // Draw
-        let mut frame = self.display.draw();
-        let uniforms = uniform! {
-            fb: self.texture.sampled().magnify_filter(glium::uniforms::MagnifySamplerFilter::Nearest)
-                           .minify_filter(glium::uniforms::MinifySamplerFilter::Nearest),
-        };
-        frame
-            .draw(
-                &self.vbo,
-                self.indices,
-                &self.program,
-                &uniforms,
-                &Default::default(),
-            )
-            .unwrap();
-        frame.finish().unwrap();
+        tracing::warn!("ppu.draw_frame -> not implemented");
         self.frame_ready = false;
     }
 }

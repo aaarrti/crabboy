@@ -1,0 +1,5 @@
+[core]
+    remote = default
+    autostage = true
+['remote "default"']
+    url = gs://crabboi_data/dvc
